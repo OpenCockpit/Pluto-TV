@@ -1,0 +1,236 @@
+# German Translation for PlutoTV.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-16 16:18+0200\n"
+"PO-Revision-Date: 2026-07-16 16:18+0200\n"
+"Last-Translator: xcentaurix\n"
+"Language-Team: xcentaurix\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Poedit 3.5\n"
+"X-Poedit-Basepath: ../src\n"
+"X-Poedit-SearchPath-0: .\n"
+
+msgid "Local"
+msgstr ""
+
+msgid "service name"
+msgstr ""
+
+msgid "service reference"
+msgstr ""
+
+msgid "None"
+msgstr ""
+
+msgid "Stitcher"
+msgstr ""
+
+msgid "JMP2 proxy"
+msgstr ""
+
+msgid "i.mjh.nz"
+msgstr ""
+
+msgid "A silent download is in progress."
+msgstr ""
+
+msgid "picons"
+msgstr ""
+
+msgid "Fetching picons..."
+msgstr ""
+
+msgid "LiveTV update completed"
+msgstr ""
+
+msgid "Processing data..."
+msgstr ""
+
+msgid "Waiting for Channel: "
+msgstr ""
+
+msgid "The download is in progress. Exit now?"
+msgstr ""
+
+msgid "PlutoTV updating"
+msgstr ""
+
+msgid "Please wait..."
+msgstr ""
+
+msgid "Updating: Pluto TV %s"
+msgstr ""
+
+msgid ""
+"There is no data, it is possible that Pluto TV is not available in your "
+"country"
+msgstr ""
+
+msgid "Do you want to resume this playback?"
+msgstr ""
+
+msgid "Resume position at %s"
+msgstr ""
+
+msgid "Remove picons"
+msgstr ""
+
+msgid "PlutoTV Setup Actions"
+msgstr ""
+
+msgid "Remove LiveTV Bouquet"
+msgstr ""
+
+msgid "PlutoTV Setup"
+msgstr ""
+
+msgid "VoD country"
+msgstr ""
+
+msgid "Select the country that the VoD list will be created for."
+msgstr ""
+
+msgid "LiveTV bouquet %s"
+msgstr ""
+
+msgid "Country for which LiveTV bouquet %s will be created."
+msgstr ""
+
+msgid "Live TV mode"
+msgstr ""
+
+msgid ""
+"Select the stream provider. Stitcher uses the native Pluto server with JWT "
+"auth (resolved at playback). JMP2 uses the jmp2.uk proxy. i.mjh.nz uses Matt "
+"Huisman's community playlist. Requires bouquet update to take effect."
+msgstr ""
+
+msgid "Picon type"
+msgstr ""
+
+msgid ""
+"Using service name picons means they will continue to work even if the "
+"service reference changes. Also, they can be shared between channels of the "
+"same name that don't have the same service references."
+msgstr ""
+
+msgid "Data location"
+msgstr ""
+
+msgid ""
+"Used for storing video cover graphics, etc. A hard drive that goes into "
+"standby mode or a slow network mount are not good choices."
+msgstr ""
+
+msgid "Config folder"
+msgstr ""
+
+msgid "Folder the config data are stored in."
+msgstr ""
+
+msgid "Loading data... Please wait"
+msgstr ""
+
+msgid "Exit"
+msgstr ""
+
+msgid "TMDb Search"
+msgstr ""
+
+msgid "IMDb Search"
+msgstr ""
+
+msgid "MENU"
+msgstr ""
+
+msgid "Change country"
+msgstr ""
+
+msgid "Go forward one level including starting playback"
+msgstr ""
+
+msgid "Go back one level including exiting"
+msgstr ""
+
+msgid "Create or update PlutoTV live bouquets"
+msgstr ""
+
+msgid "Go back one level"
+msgstr ""
+
+msgid "Open the plugin configuration screen"
+msgstr ""
+
+msgid "Search for information in %s"
+msgstr ""
+
+msgid "The Movie Database"
+msgstr ""
+
+msgid "the Internet Movie Database"
+msgstr ""
+
+msgid "Load the VoD list of another country"
+msgstr ""
+
+msgid "Scroll the information field"
+msgstr ""
+
+msgid "VOD Menu"
+msgstr ""
+
+msgid "PlutoTV"
+msgstr ""
+
+msgid "Episode"
+msgstr ""
+
+msgid "Season"
+msgstr ""
+
+msgid "Seasons"
+msgstr ""
+
+msgid ""
+"The Pluto TV bouquets in your channel list have been updated.\n"
+"\n"
+"They will now be rebuilt automatically every 5 hours."
+msgstr ""
+
+msgid "Update LiveTV Bouquet"
+msgstr ""
+
+msgid "LiveTV Bouquet last updated:"
+msgstr ""
+
+msgid "LiveTV Bouquet needs updating. Press GREEN."
+msgstr ""
+
+msgid "Create LiveTV Bouquet"
+msgstr ""
+
+msgid "Temporarily switch the VoD list to another country"
+msgstr ""
+
+msgid "PlutoTVCockpit"
+msgstr ""
+
+msgid "View video on demand and download a bouquet of live tv channels"
+msgstr ""
+
+msgid "Download PlutoTV bouquets, picons and EPG"
+msgstr ""
+
+msgid "Silently download PlutoTV"
+msgstr ""

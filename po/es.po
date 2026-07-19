@@ -1,0 +1,192 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PlutoTV\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-08-18 21:56+0200\n"
+"PO-Revision-Date: 2025-08-03 14:44+0200\n"
+"Last-Translator: \n"
+"Language-Team: morser\n"
+"Language: es_ES\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Poedit 3.6\n"
+"X-Poedit-Basepath: ../../..\n"
+"X-Poedit-SearchPath-0: .\n"
+
+msgid "%s Season available"
+msgid_plural "%s Seasons available"
+msgstr[0] "%s Temporadas disponibles"
+msgstr[1] "%s Temporadas disponibles"
+
+msgid "A silent download is in progress."
+msgstr "La descarga está en proceso."
+
+msgid "Country for which LiveTV bouquet %s will be created."
+msgstr "País para el cual se creará la lista de canales %s."
+
+msgid "Create LiveTV Bouquet"
+msgstr "Crear lista de canales"
+
+msgid "Create or update PlutoTV live bouquets"
+msgstr "Crear o actualizar lista de canales"
+
+msgid "Data location"
+msgstr "Dispositivo de datos"
+
+msgid "Do you want to resume this playback?"
+msgstr "¿Deseas reanudar este video donde se dejo?"
+
+msgid "Download PlutoTV bouquets, picons and EPG"
+msgstr "Descargar lista de canales de PlutoTV, picons y EPG"
+
+msgid "Episode"
+msgstr "Episodio"
+
+msgid "Exit"
+msgstr "Salir"
+
+msgid "Fetching picons..."
+msgstr "Obteniendo picones..."
+
+msgid "Go back one level"
+msgstr "Retroceder un nivel"
+
+msgid "Go back one level including exiting"
+msgstr "Retroceder un nivel, incluida salir"
+
+msgid "Go forward one level including starting playback"
+msgstr "Avanzar un nivel, incluido el inicio de la reproducción."
+
+msgid "IMDb Search"
+msgstr "IMDb"
+
+msgid "LiveTV Bouquet last updated:"
+msgstr "Última actualización:"
+
+msgid "LiveTV Bouquet needs updating. Press GREEN."
+msgstr "Se necesitan actualizar los canales. Pulsa VERDE."
+
+msgid "LiveTV bouquet %s"
+msgstr "Grupo de canales %s"
+
+msgid "LiveTV update completed"
+msgstr "Grupo de canales actualizado"
+
+msgid "Loading data... Please wait"
+msgstr "Cargando datos... Por favor espere"
+
+msgid "Local"
+msgstr "Local"
+
+msgid "MENU"
+msgstr "MENU"
+
+msgid "None"
+msgstr "Ninguno"
+
+msgid "Open the plugin configuration screen"
+msgstr "Abrir la pantalla de configuración"
+
+msgid "Picon type"
+msgstr "Tipo de picones"
+
+msgid "Please wait..."
+msgstr "Espere..."
+
+msgid "PlutoTV"
+msgstr "PlutoTV"
+
+msgid "PlutoTV Setup"
+msgstr "Configuración de Pluto TV"
+
+msgid "PlutoTV updating"
+msgstr "Pluto TV actualizando"
+
+msgid "Processing data..."
+msgstr "Procesando datos..."
+
+msgid "Remove LiveTV Bouquet"
+msgstr "Eliminar la lista de canales"
+
+msgid "Remove picons"
+msgstr "Borrar picones"
+
+msgid "Resume position at %s"
+msgstr "Posición de reanudación en %s"
+
+msgid "Scroll the information field"
+msgstr "Desplácese por la información"
+
+msgid "Search for information in %s"
+msgstr "Buscar información en %s"
+
+msgid "Season"
+msgstr "Temporada"
+
+msgid "Seasons"
+msgstr "Temporadas"
+
+msgid "Select the country that the VoD list will be created for."
+msgstr "El país para el cual se creará la lista de video bajo demanda."
+
+msgid "Silently download PlutoTV"
+msgstr "Descarga de PlutoTV en segundo plano"
+
+msgid "TMDb Search"
+msgstr "TMDb"
+
+msgid "The Movie Database"
+msgstr "The Movie Database"
+
+msgid ""
+"The Pluto TV bouquets in your channel list have been updated.\n"
+"\n"
+"They will now be rebuilt automatically every 5 hours."
+msgstr ""
+"Ahora tienes una lista de favoritos actualizada con los canales de Pluto TV en tu lista de canales.\n"
+"\n"
+"Todo se actualizará automáticamente cada 5 horas."
+
+msgid "The download is in progress. Exit now?"
+msgstr "La descarga está en proceso. Desea salir ahora?"
+
+msgid "There is no data, it is possible that Pluto TV is not available in your country"
+msgstr "No hay datos, es posible que Pluto TV no este disponible en tu Pais"
+
+msgid "Update LiveTV Bouquet"
+msgstr "Actualizar Lista de canales"
+
+msgid "Updating: Pluto TV %s"
+msgstr "Actualizando: Pluto TV %s"
+
+msgid "Used for storing video cover graphics, etc. A hard drive that goes into standby mode or a slow network mount are not good choices."
+msgstr "Se utiliza para almacenar gráficos de carátula de video, etc. Un disco duro que entra en modo de espera o un montaje de red lento no son buenas opciones."
+
+msgid "Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references."
+msgstr "El uso de picones de nombre de canal significa que seguirán funcionando incluso si cambia la referencia del canal. Además, se pueden compartir entre canales con el mismo nombre que no tengan las mismas referencias."
+
+msgid "VOD Menu"
+msgstr "Menú VOD"
+
+msgid "View video on demand and download a bouquet of live tv channels"
+msgstr "Ver Pluto TV bajo demanda y descargar lista de canales en vivo"
+
+msgid "VoD country"
+msgstr "País de VoD"
+
+msgid "Waiting for Channel: "
+msgstr "Esperando el Canal: "
+
+msgid "picons"
+msgstr "picones"
+
+msgid "service name"
+msgstr "nombre de canal"
+
+msgid "service reference"
+msgstr "referencia de canal"
+
+msgid "the Internet Movie Database"
+msgstr "Internet Movie Database"

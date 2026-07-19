@@ -1,0 +1,210 @@
+# Finnish translation for PlutoTV.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-09-02 14:15+0300\n"
+"PO-Revision-Date: 2025-09-04 15:40+0300\n"
+"Last-Translator: Orlandox\n"
+"Language-Team: Orlandox\n"
+"Language: fi\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Poedit 3.7\n"
+
+msgid "%s Season available"
+msgid_plural "%s Seasons available"
+msgstr[0] "%s Kausi saatavilla"
+msgstr[1] "%s Kautta saatavilla"
+
+msgid "A silent download is in progress."
+msgstr "Hiljainen lataus käynnissä."
+
+msgid "Country for which LiveTV bouquet %s will be created."
+msgstr "Maa, jolle LiveTV-suosikkilista %s luodaan."
+
+msgid "Create LiveTV Bouquet"
+msgstr "Luo LiveTV-suosikkilista"
+
+msgid "Create or update PlutoTV live bouquets"
+msgstr "Luo tai päivitä PlutoTV Live-suosikkilistat"
+
+msgid "Data location"
+msgstr "Tietojen sijainti"
+
+msgid "Do you want to resume this playback?"
+msgstr "Haluatko jatkaa tätä toistoa?"
+
+msgid "Download PlutoTV bouquets, picons and EPG"
+msgstr "Lataa PlutoTV-suosikkilista, piconit ja EPG"
+
+msgid "Episode"
+msgstr "Jakso"
+
+msgid "Exit"
+msgstr "Poistu"
+
+msgid "Fetching picons..."
+msgstr "Noudetaan piconeita..."
+
+msgid "Go back one level"
+msgstr "Siirry yksi taso taaksepäin"
+
+msgid "Go back one level including exiting"
+msgstr "Siirry yksi taso taaksepäin, mukaan lukien poistuminen"
+
+msgid "Go forward one level including starting playback"
+msgstr "Siirry yksi taso eteenpäin, mukaan lukien toiston aloittaminen"
+
+msgid "IMDb Search"
+msgstr "IMDb-haku"
+
+msgid "Live TV Mode"
+msgstr "Live TV-tila"
+
+msgid "LiveTV Bouquet last updated:"
+msgstr "LiveTV-suosikkilistan viimeisin päivitys:"
+
+msgid "LiveTV Bouquet needs updating. Press GREEN."
+msgstr "LiveTV-suosikkilista on päivitettävä. Paina VIHREÄ."
+
+msgid "LiveTV bouquet %s"
+msgstr "LiveTV-suosikkilista %s"
+
+msgid "LiveTV update completed"
+msgstr "LiveTV:n päivitys valmis"
+
+msgid "Loading data... Please wait"
+msgstr "Ladataan dataa... odota"
+
+msgid "Local"
+msgstr "Paikallinen"
+
+msgid "MENU"
+msgstr "MENU"
+
+msgid "None"
+msgstr "Ei mitään"
+
+msgid "Open the plugin configuration screen"
+msgstr "Avaa lisäosan asetukset"
+
+msgid "Original"
+msgstr "Alkuperäinen"
+
+msgid "Picon type"
+msgstr "Piconin tyyppi"
+
+msgid "Please wait..."
+msgstr "Odota..."
+
+msgid "PlutoTV"
+msgstr "PlutoTV"
+
+msgid "PlutoTV Setup"
+msgstr "PlutoTV:n asetukset"
+
+msgid "PlutoTV updating"
+msgstr "PlutoTV:n päivitys"
+
+msgid "Processing data..."
+msgstr "Käsitellään tietoja..."
+
+msgid "Remove LiveTV Bouquet"
+msgstr "Poista LiveTV-suosikkilista"
+
+msgid "Remove picons"
+msgstr "Poista piconit"
+
+msgid "Resume position at %s"
+msgstr "Jatka paikasta %s"
+
+msgid "Roku TV"
+msgstr "Roku TV"
+
+msgid "Samsung TV"
+msgstr "Samsung TV"
+
+msgid "Scroll the information field"
+msgstr "Vieritä tietokenttää"
+
+msgid "Search for information in %s"
+msgstr "Etsi tietoja %s:sta"
+
+msgid "Season"
+msgstr "Kausi"
+
+msgid "Seasons"
+msgstr "Kaudet"
+
+msgid "Select the country that the VoD list will be created for."
+msgstr "Valitse maa, jolle Tilaus-TV (VoD) -lista luodaan."
+
+msgid "Silently download PlutoTV"
+msgstr "Lataa PlutoTV hiljaisesti"
+
+msgid "TMDb Search"
+msgstr "TMDb-haku"
+
+msgid "The Movie Database"
+msgstr "The Movie Database"
+
+msgid ""
+"The Pluto TV bouquets in your channel list have been updated.\n"
+"\n"
+"They will now be rebuilt automatically every 5 hours."
+msgstr ""
+"Sinulla on nyt päivitetty suosikkilista PlutoTV-kanavilla kanavaluettelossasi.\n"
+"\n"
+"Kaikki päivitetään automaattisesti 5 tunnin välein."
+
+msgid "The download is in progress. Exit now?"
+msgstr "Lataus käynnissä. Poistutaanko nyt?"
+
+msgid "There is no data, it is possible that Pluto TV is not available in your country"
+msgstr "Dataa ei ole, joten PlutoTV ei ehkä ole saatavilla maassasi"
+
+msgid "This controls the URI format in the bouquet file."
+msgstr "Tämä hallitsee suosikkilistan URI-muotoa."
+
+msgid "Update LiveTV Bouquet"
+msgstr "Päivitä LiveTV-suosikkilista"
+
+msgid "Updating: Pluto TV %s"
+msgstr "Päivitetään: PlutoTV %s"
+
+msgid "Used for storing video cover graphics, etc. A hard drive that goes into standby mode or a slow network mount are not good choices."
+msgstr "Käytetään videoiden kansikuvien yms. tallentamiseen. Valmiustilaan siirtyvä kiintolevy tai hidas verkkoliitos eivät ole hyviä valintoja."
+
+msgid "Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references."
+msgstr "Kanavan nimisten (SNP) piconien käyttö tarkoittaa, että ne toimivat edelleen, vaikka kanavan referenssi muuttuisi. Niitä voidaan myös jakaa samannimisten kanavien kesken, joilla ei ole samoja kanavien referenssejä."
+
+msgid "VOD Menu"
+msgstr "VOD-Menu"
+
+msgid "View video on demand and download a bouquet of live tv channels"
+msgstr "Katso tilaus-TV:ta ja lataa LiveTV-kanavien suosikkilista"
+
+msgid "VoD country"
+msgstr "Tilaus-TV:n (VOD) maa"
+
+msgid "Waiting for Channel: "
+msgstr "Odotetaan kanavaa: "
+
+msgid "picons"
+msgstr "piconit"
+
+msgid "service name"
+msgstr "kanavan nimi"
+
+msgid "service reference"
+msgstr "kanavan referenssi"
+
+msgid "the Internet Movie Database"
+msgstr "the Internet Movie Database"

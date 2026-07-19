@@ -1,0 +1,12 @@
+#!/bin/sh
+
+echo "***********************************"
+echo "*         PlutoTVCockpit          *"
+echo "*               by                *"
+echo "*           xcentaurix            *"
+echo "***********************************"
+echo ""
+echo "Plugin installed successfully."
+echo "Please restart Enigma2 now!"
+echo ""
+exit 0

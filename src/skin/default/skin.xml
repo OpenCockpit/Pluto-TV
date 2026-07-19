@@ -1,0 +1,37 @@
+<?xml version="1.0" ?>
+<skin>
+	<screen flags="wfNoBorder" name="PlutoTVCockpit" position="fill">
+		<ePixmap pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/backdrop.jpg" position="0,0" size="e,1020" zPosition="-1"/>
+		<eLabel backgroundColor="#000000" cornerRadius="12" position="70,30" size="1780,90" zPosition="1"/>
+		<widget alphatest="blend" font="Regular;40" foregroundColor="#00ffff00" halign="center" position="400,48" render="Label" size="1150,55" source="playlist" transparent="1" zPosition="2"/>
+		<widget backgroundColor="#00000000" font="Regular;43" halign="right" position="e-400,48" render="Label" size="300,55" source="global.CurrentTime" transparent="1" zPosition="5">
+			<convert type="ClockToText">Format:%H:%M</convert>
+		</widget>
+		<ePixmap alphatest="blend" pixmap="extensions/transblack.png" position="70,170" size="615,740" transparent="1" zPosition="1"/>
+		<widget enableWrapAround="1" name="feedlist" position="70,170" scrollbarMode="showOnDemand" size="615,740" transparent="1" zPosition="5"/>
+		<widget alphatest="blend" pixmap="extensions/transblack.png" position="70,950" render="Pixmap" size="615,50" source="updated" transparent="1" zPosition="1">
+			<convert type="ConditionalShowHide"/>
+		</widget>
+		<widget alphatest="blend" font="Regular;25" halign="center" position="70,950" render="Label" size="615,50" source="updated" transparent="1" valign="center" zPosition="5"/>
+		<widget backgroundColor="#000000" font="Regular;50" halign="center" name="loading" position="center,center" size="800,60" transparent="0" valign="center" zPosition="10"/>
+		<widget alphatest="blend" pixmap="extensions/transblack.png" position="685,170" render="Pixmap" size="1165,750" source="vtitle" transparent="1" zPosition="0">
+			<convert type="ConditionalShowHide"/>
+		</widget>
+		<widget font="Regular;37" foregroundColor="orange" position="778,180" render="Label" size="1065,48" source="vtitle" transparent="1" zPosition="5"/>
+		<widget alphatest="blend" backgroundColor="#000000" cornerRadius="27" font="Regular;0" foregroundColor="#000000" name="posterBG" position="733,233" size="472,679" widgetBorderColor="#00ffde2b" widgetBorderWidth="2" zPosition="3"/>
+		<widget alphatest="blend" backgroundColor="#000000" cornerRadius="25" name="poster" position="735,235" size="468,675" transparent="1" zPosition="5"/>
+		<widget font="Regular;27" name="info" position="1223,235" size="619,675" transparent="1" zPosition="5"/>
+		<eLabel backgroundColor="#00101113" cornerRadius="12" position="0,e-60" size="1920,60" zPosition="1"/>
+		<widget addon="ColorButtonsSequence" alignment="left" backgroundColor="#00000000" connection="key_red,key_green,key_yellow,key_blue" font="Regular;33" position="224,1030" size="1694,35" spacing="10" textColors="key_red:#00ff0808,key_green:#0004c81b,key_yellow:#00edf506,key_blue:#00077cf5" transparent="1" valign="center" zPosition="10"/>
+		<ePixmap alphatest="blend" backgroundColor="#00000000" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/key_menu.png" position="30,1031" size="52,38" transparent="1" zPosition="2"/>
+		<ePixmap alphatest="blend" backgroundColor="#00000000" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/key_help.png" position="82,1031" size="52,38" transparent="1" zPosition="2"/>
+	</screen>
+	<screen backgroundColor="#ff000000" flags="wfNoBorder" name="DownloadProgress" position="60,60" resolution="1920,1080" size="620,200">
+		<eLabel alphatest="blend" backgroundColor="#2d101214" cornerRadius="8" position="0,0" size="620,200" widgetBorderColor="#2d888888" widgetBorderWidth="2" zPosition="-1"/>
+		<widget backgroundColor="#000000" borderColor="#000000" borderWidth="1" font="Regular;25" foregroundColor="#dfdfdf" halign="left" name="action" noWrap="1" position="15,10" size="590,30" transparent="1" valign="center"/>
+		<widget alphatest="blend" backgroundColor="#1143495b" borderWidth="0" name="progress" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/progress.png" position="15,100" size="590,12" zPosition="2"/>
+		<eLabel backgroundColor="#102a3b58" name="progess_background" position="15,100" size="590,12"/>
+		<widget backgroundColor="#000000" borderColor="#000000" borderWidth="1" font="Regular;22" foregroundColor="#dfdfdf" halign="center" name="wait" noWrap="1" position="15,65" size="590,30" transparent="1" valign="center"/>
+		<widget backgroundColor="#000000" borderColor="#000000" borderWidth="1" font="Regular;24" foregroundColor="#ffffff" halign="center" name="status" noWrap="1" position="15,120" size="590,30" transparent="1" valign="center"/>
+	</screen>
+</skin>

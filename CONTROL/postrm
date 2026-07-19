@@ -1,0 +1,4 @@
+#!/bin/sh
+echo "Cleaning up after PlutoTVCockpit removal..."
+rm -rf -- /usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit >/dev/null 2>&1
+exit 0
