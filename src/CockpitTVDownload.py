@@ -121,9 +121,33 @@ class TVDownloadBase:
             path = os.path.join(self._configFolder(), self.CHANNELLIST_FILE % cc)
             writeM3UPlaylist(path, bouquet_name, self.categories, self.m3uEntries)
 
+    def _existingBouquets(self):
+        """Yield (cc, filename) for every userbouquet file on disk matching
+        this plugin's BOUQUET_FILE template, by reversing the %s placeholder
+        back into a capturing group."""
+        cc_re = re.compile(re.escape(self.BOUQUET_FILE) % "(.+)")
+        try:
+            filenames = os.listdir("/etc/enigma2/")
+        except OSError:
+            return
+        for filename in filenames:
+            m = cc_re.fullmatch(filename)
+            if m:
+                yield m.group(1), filename
+
+    def _clearBouquet(self, cc, filename):
+        """Empty an existing bouquet's content in place instead of deleting
+        it via eDVBDB.removeBouquet(), so its file and its position in
+        bouquets.tv survive - only the per-channel content is cleared here,
+        to be completely rewritten by addOrUpdateBouquet() later for
+        locations that get re-downloaded in this same run."""
+        eDVBDB.getInstance().addOrUpdateBouquet(self._bouquetName(cc), filename, [], False)
+
     def cc(self):
         locations = [x for x in self._selectedLocations() if x] or [self._defaultLocation()]
-        eDVBDB.getInstance().removeBouquet(re.escape(self.BOUQUET_FILE) % f"(?!{'|'.join(locations)}).+")
+        for cc, filename in self._existingBouquets():
+            if cc not in locations:
+                self._clearBouquet(cc, filename)
         yield from locations
 
     def download(self):
@@ -132,9 +156,6 @@ class TVDownloadBase:
                 self.session.openWithCallback(self.close, MessageBox, self.SILENT_IN_PROGRESS_TEXT, MessageBox.TYPE_INFO, timeout=30)
             logger.info("A silent download is in progress.")
             return
-        if not self.silent:
-            eDVBDB.getInstance().removeBouquet(re.escape(self.BOUQUET_FILE) % ".*")
-            PiconFetcher(self._picons_config()).removeall()
         self.ccGenerator = self.cc()
         self.piconFetcher = PiconFetcher(self._picons_config(), self)
         threads.deferToThread(self._downloadThread)
@@ -179,6 +200,7 @@ class TVDownloadBase:
 
     def _downloadBouquetThread(self, cc):
         self.bouquet = []
+        self.resolved_count = 0
         self.bouquetCC = cc
         self.tsid = self.TSIDS.get(cc, "0")
         self.usedServiceIds = set()
@@ -191,6 +213,13 @@ class TVDownloadBase:
         reactor.callFromThread(self.updateProgressBar, 0)
         reactor.callFromThread(self.updateStatus, self.PROCESSING_TEXT)
 
+        try:
+            self._buildBouquet(cc)
+        except Exception as e:
+            logger.error("%s: failed to update, skipping to the next location: %s", cc, e)
+            self._managerThread()
+
+    def _buildBouquet(self, cc):
         channels = sorted(self._fetchChannels(cc), key=lambda x: x["number"])
         for channel in channels:
             self.buildM3U(channel)
@@ -199,10 +228,11 @@ class TVDownloadBase:
         for _group, channels_in_group in self.channelsList.items():
             channels_in_group.sort(key=lambda ch: ch[2].casefold())
 
-        self.total = len(channels)
+        self.total = sum(len(v) for v in self.channelsList.values())
 
         if len(self.categories) == 0:
             reactor.callFromThread(self.noCategories)
+            self._managerThread()
         else:
             if self.categories[0] in self.channelsList:
                 self.subtotal = len(self.channelsList[self.categories[0]])
@@ -235,12 +265,19 @@ class TVDownloadBase:
 
                 chid = self.channelsList[key][self.chitem][1]
                 ref, stream_url, ch_name, ch_logourl = self._buildBouquetEntry(key, self.chitem)
-                self.bouquet.append(f"{ref}:{stream_url}:{ch_name}")
-                self.m3uEntries.setdefault(key, []).append((chid, ch_name, ch_logourl, stream_url.replace("%3a", ":")))
+                if stream_url:
+                    self.resolved_count += 1
+                    self.bouquet.append(f"{ref}:{stream_url}:{ch_name}")
+                    self.m3uEntries.setdefault(key, []).append((chid, ch_name, ch_logourl, stream_url.replace("%3a", ":")))
+                    self.piconFetcher.addPicon(ref, ch_name, ch_logourl, self.silent)
+                else:
+                    logger.debug("%s: no resolvable stream URL, skipping from bouquet", ch_name)
                 self.chitem += 1
                 reactor.callFromThread(self.updateStatus, self.WAITING_FOR_CHANNEL_TEXT + ch_name)
-
-                self.piconFetcher.addPicon(ref, ch_name, ch_logourl, self.silent)
+            elif self.total > 0 and self.resolved_count == 0:
+                logger.error("%s: no channel resolved a stream URL, leaving existing bouquet unchanged", self.bouquetCC)
+                reactor.callFromThread(self.noCategories)
+                self._managerThread()
             else:
                 bouquet_name = self._bouquetName(self.bouquetCC)
                 bouquet_file = self.BOUQUET_FILE % self.bouquetCC
@@ -313,6 +350,7 @@ class TVDownloadScreenMixin:
             progress = min(((param + 1) * 100) // self.total, 100)
         except Exception:
             progress = 0
+        logger.debug("progress: %s", progress)
         self["progress"].setValue(progress)
         self["wait"].text = str(progress) + " %"
 
@@ -358,11 +396,6 @@ class TVDownloadSilentMixin:
 
     def noCategories(self):
         logger.debug("There is no data, it is possible that %s is not available in your %s.", self.FRIENDLY_NAME, self.LOCATION_WORD)
-        self.stop()
-        os.makedirs(os.path.dirname(self.TIMER_FILE), exist_ok=True)
-        with open(self.TIMER_FILE, "w", encoding="utf-8") as f:
-            f.write(str(time.time()))
-        self.start()
 
 
 def importXMLTVGuide(epgcache, log_prefix, path, xmltv_bytes, channels_map):

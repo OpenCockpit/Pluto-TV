@@ -409,13 +409,13 @@ class PlutoTVCockpit(Screen, HelpableScreen):
             with open(TIMER_FILE, "r", encoding="utf-8") as f:
                 last = float(f.read().replace("\n", "").replace("\r", ""))
             updated = strftime(" %x %H:%M", localtime(int(last)))
-            self["key_green"].text = _("Update LiveTV Bouquet")
-            self["updated"].text = _("LiveTV Bouquet last updated:") + updated
+            self["key_green"].text = _("Update Live-TV Bouquet")
+            self["updated"].text = _("Live-TV Bouquet last updated:") + updated
         elif "plutotvcockpit" in bouquets:
-            self["key_green"].text = _("Update LiveTV Bouquet")
-            self["updated"].text = _("LiveTV Bouquet needs updating. Press GREEN.")
+            self["key_green"].text = _("Update Live-TV Bouquet")
+            self["updated"].text = _("Live-TV Bouquet needs updating. Press GREEN.")
         else:
-            self["key_green"].text = _("Create LiveTV Bouquet")
+            self["key_green"].text = _("Create Live-TV Bouquet")
             self["updated"].text = ""
 
     def exit(self, *_args, **_kwargs):

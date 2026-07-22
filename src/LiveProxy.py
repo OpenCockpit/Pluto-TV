@@ -6,13 +6,13 @@
 #   single muxed TS segments that Enigma2's DVB hardware pipeline handles.
 
 
-import math
+import bisect
 import os
 import subprocess
 import tempfile
 import threading
 import time
-from collections import OrderedDict, deque
+from collections import OrderedDict, namedtuple
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import urljoin, urlparse, parse_qs
@@ -29,14 +29,15 @@ PROXY_PORT = 7654
 _SEG_DURATION = 5.0
 _MAX_SEG_CACHE = 200
 _SEQ_REPROCESS_WINDOW = 10
-_MAX_AUDIO_RING = 30
 _PREFETCH_LEAD_SEGMENTS = 20
-_DISC_LOOKAHEAD_SEGMENTS = 30
+_AUDIO_BUFFER_RETAIN_EPOCHS = 1
 _MAX_AUDIO_EPOCH_LAG = 2
+_MAX_AUDIO_BUFFER_BYTES = 50_000_000
+_VIDEO_BUFFER_RETAIN_MARGIN_BYTES = 400000
 _AUDIO_FETCH_WORKERS = 4
-_AUDIO_STRAGGLER_GRACE_POLLS = -(-_PREFETCH_LEAD_SEGMENTS // _AUDIO_FETCH_WORKERS)
 _AUDIO_PREPOPULATE_CAP = 10
-_LATE_AUDIO_WAIT_FACTOR = 6.0
+_LATE_AUDIO_WAIT_FACTOR = 2.0
+_DISC_AUDIO_PEEK_WAIT = 1.5
 _HANDLE_SEGMENT_DEADLINE_FACTOR = 1.0
 _COLD_START_FIRST_SEGMENT_WAIT = 2.0
 _FFMPEG_TIMEOUT = 30
@@ -125,9 +126,207 @@ def _patch_continuity(data: bytes, start_cc: dict) -> 'tuple[bytes, dict]':
     return bytes(buf), cc_state
 
 
+_WindowMeta = namedtuple('_WindowMeta', 'epoch start_pts end_pts is_disc')
+
+
+def _scan_ts_index(ts_bytes: bytes) -> 'tuple[list[tuple[int, int]], bytes | None]':
+    """Scan raw TS bytes for every PUSI'd PTS-carrying packet's (offset, pts)
+    and the most recent PAT (pid 0) + immediately-following PMT packet pair.
+
+    Generalizes _first_pts's single-packet early-exit scan to index every
+    occurrence in the given bytes, not just the first - this is what lets
+    _RenditionBuffer.cut() slice an exact PTS range instead of only ever
+    handing back a whole segment. Pure function (no shared state touched),
+    deliberately kept callable outside any lock: the per-packet scan is the
+    expensive part of appending a segment to a _RenditionBuffer, and doing
+    it while holding state._lock would stall every other thread's
+    concurrent add/cut/trim call the same way logger.debug() would (see
+    pop_audio_for_pts's own reasoning for logging outside the lock).
+    """
+    pts_offsets = []
+    pat_pmt = None
+    pending_pat = None
+    n = len(ts_bytes) // 188
+    for i in range(n):
+        off = i * 188
+        if ts_bytes[off] != 0x47:
+            continue
+        pid = ((ts_bytes[off + 1] & 0x1F) << 8) | ts_bytes[off + 2]
+        if pid == 0:
+            pending_pat = bytes(ts_bytes[off:off + 188])
+            continue
+        if pending_pat is not None and pid != 0x1FFF:
+            pat_pmt = pending_pat + bytes(ts_bytes[off:off + 188])
+            pending_pat = None
+        if not ((ts_bytes[off + 1] >> 6) & 1):
+            continue
+        afc = (ts_bytes[off + 3] >> 4) & 3
+        if not (afc & 1):
+            continue
+        pl = off + 4 + (1 + ts_bytes[off + 4] if afc & 2 else 0)
+        if pl + 14 > off + 188:
+            continue
+        if ts_bytes[pl:pl + 3] != b'\x00\x00\x01':
+            continue
+        if not (ts_bytes[pl + 7] & 0x80):
+            continue
+        b = ts_bytes[pl + 9:pl + 14]
+        pts = (((b[0] & 0x0E) << 29) | (b[1] << 22) |
+               ((b[2] & 0xFE) << 14) | (b[3] << 7) |
+               ((b[4] & 0xFE) >> 1))
+        pts_offsets.append((off, pts))
+    return pts_offsets, pat_pmt
+
+
+class _RenditionBuffer:
+    """Continuous per-epoch byte buffer for one HLS rendition (video-only or
+    audio-only TS).
+
+    Bytes from consecutive CDN segments within the same epoch are appended
+    in arrival order - real CDN PTS is already continuous within an epoch
+    (the same reason -copyts is already correct for ordinary same-epoch
+    segment pairs, see _ffmpeg_mux's docstring), so cut() can slice an
+    exact PTS range out of this buffer freely, drawing across CDN segment
+    boundaries instead of requiring one whole discrete segment to match
+    another.
+
+    A PTS index (pts_list/off_list, kept sorted by construction - see
+    append()) is built incrementally alongside each append so cut() can
+    binary-search for byte offsets instead of rescanning the whole buffer
+    on every call.
+    """
+    __slots__ = ('epoch', 'is_disc_epoch', 'first_window_emitted',
+                 'data', 'pts_list', 'off_list',
+                 'last_pat_pmt', 'created_at', 'last_append_at', 'closed_at')
+
+    def __init__(self, epoch: int, is_disc_epoch: bool):
+        self.epoch = epoch
+        self.is_disc_epoch = is_disc_epoch
+        self.first_window_emitted = False
+        self.data = bytearray()
+        self.pts_list: list = []
+        self.off_list: list = []
+        self.last_pat_pmt: 'bytes | None' = None
+        self.created_at = time.monotonic()
+        self.last_append_at = self.created_at
+        self.closed_at: 'float | None' = None
+
+    def append(self, ts_bytes: bytes, pts_offsets: list, pat_pmt: 'bytes | None'):
+        """Extend the buffer with *ts_bytes*, whose PTS index and PAT/PMT
+        were already scanned outside any lock by _scan_ts_index (offsets in
+        *pts_offsets* are relative to the start of *ts_bytes*, rebased here
+        to this buffer's own coordinates).
+
+        Rejects the whole segment - bytes included, not appended at all -
+        if it would go backwards relative to the buffer's current tail
+        (e.g. two independent callers racing on overlapping seq ranges at
+        channel startup; see _append_audio's own seq-level dedup for the
+        primary guard against that). An earlier version of this method
+        still appended ts_bytes unconditionally and only skipped the
+        offending entries from the PTS index, defending pts_list/off_list's
+        required monotonicity - but left that segment's raw bytes
+        physically spliced into self.data anyway, unindexed and invisible
+        to any cut() whose byte range doesn't happen to span them, but
+        silently *included*, out of temporal order, in any cut() whose
+        range does. Rejecting the whole segment here is the only way to
+        keep every byte in self.data reachable exclusively through
+        pts_list/off_list, which cut()'s slicing assumes.
+        """
+        if self.pts_list and pts_offsets and pts_offsets[0][1] < self.pts_list[-1]:
+            return
+        base = len(self.data)
+        self.data += ts_bytes
+        self.last_append_at = time.monotonic()
+        for off, pts in pts_offsets:
+            self.pts_list.append(pts)
+            self.off_list.append(base + off)
+        if pat_pmt is not None:
+            self.last_pat_pmt = pat_pmt
+
+    def cut(self, start_pts: int, end_pts: 'int | None'):
+        """Return (sliced_bytes, actual_start_pts, actual_end_pts) covering
+        the buffered index entries in [start_pts, end_pts), or None if not
+        (yet) coverable. *end_pts*=None cuts everything currently buffered
+        from start_pts on (used to flush a closing epoch's remainder).
+
+        The returned bytes are prepended with the buffer's most recently
+        observed PAT+PMT pair (see _scan_ts_index): a slice can start
+        mid-CDN-segment, where the nearest PAT/PMT in the original stream
+        may sit well before the slice's own start offset.
+        """
+        if not self.pts_list:
+            return None
+        start_i = bisect.bisect_left(self.pts_list, start_pts)
+        if start_i >= len(self.pts_list):
+            return None
+        if end_pts is None:
+            end_i = len(self.pts_list) - 2
+            if end_i < start_i:
+                return None
+        else:
+            if self.pts_list[-1] < end_pts:
+                return None
+            end_i = bisect.bisect_left(self.pts_list, end_pts) - 1
+            if end_i < start_i:
+                return None
+        start_off = self.off_list[start_i]
+        end_off = self.off_list[end_i + 1] if end_i + 1 < len(self.off_list) else len(self.data)
+        chunk = bytes(self.data[start_off:end_off])
+        if self.last_pat_pmt is not None:
+            chunk = self.last_pat_pmt + chunk
+        return chunk, self.pts_list[start_i], self.pts_list[end_i]
+
+    def trim_before(self, pts: int, retain_bytes: int = 0):
+        """Drop the consumed prefix (bounding memory), keeping *retain_bytes*
+        behind the trim point so the narrowed on-demand fallback in
+        _handle_segment can still re-derive a just-produced window without
+        a fresh CDN re-fetch (see _VIDEO_BUFFER_RETAIN_MARGIN_BYTES).
+        """
+        i = bisect.bisect_left(self.pts_list, pts)
+        if i <= 0:
+            return
+        cut_off = max(0, self.off_list[i] - retain_bytes)
+        if cut_off <= 0:
+            return
+        del self.data[:cut_off]
+        self.off_list = [o - cut_off for o in self.off_list]
+        keep = bisect.bisect_left(self.off_list, 0)
+        if keep > 0:
+            self.pts_list = self.pts_list[keep:]
+            self.off_list = self.off_list[keep:]
+
+    def trim_to_max_bytes(self, max_bytes: int):
+        """Drop the oldest indexed entries (and their bytes) until this
+        buffer's total size is at most *max_bytes*, regardless of whether
+        anything has actually consumed them via a successful cut() yet.
+
+        See _MAX_AUDIO_BUFFER_BYTES - a defensive backstop for a buffer
+        that never gets a successful match at all (trim_before() alone
+        never fires for one), not a routine eviction path.
+        """
+        if len(self.data) <= max_bytes or not self.off_list:
+            return
+        target_off = len(self.data) - max_bytes
+        i = bisect.bisect_left(self.off_list, target_off)
+        if i <= 0 or i >= len(self.off_list):
+            return
+        cut_off = self.off_list[i]
+        del self.data[:cut_off]
+        self.off_list = [o - cut_off for o in self.off_list[i:]]
+        self.pts_list = self.pts_list[i:]
+
+    def mark_closed(self):
+        """Stop receiving appends but stay readable (e.g. for
+        _slice_audio_for_window's one-epoch-back fallback) until pruned -
+        see _prune_audio_bufs.
+        """
+        self.closed_at = time.monotonic()
+
+
 def _ffmpeg_mux(video_data: bytes, audio_data: 'bytes | None' = None,
                 state: '_ChannelState | None' = None, is_disc: bool = False,
-                track_cc: bool = False, reset_cc: 'bool | None' = None) -> bytes:
+                track_cc: bool = False, reset_cc: 'bool | None' = None,
+                v_pts: 'int | None' = None, a_pts: 'int | None' = None) -> bytes:
     """Mux video-only and audio-only TS segments via system ffmpeg.
 
     Both inputs are written to seekable temp files so ffmpeg can probe each
@@ -135,9 +334,18 @@ def _ffmpeg_mux(video_data: bytes, audio_data: 'bytes | None' = None,
     the single stream is re-muxed without explicit stream mapping.
     Falls back to returning the input data unchanged on any ffmpeg error.
 
-    itsoffset is derived from the PTS difference between the two streams.
-    Audio and video segments are paired sequentially (FIFO queue); the
-    itsoffset reflects whatever CDN-side alignment exists between the streams.
+    itsoffset is derived from the PTS difference between the two streams -
+    it reflects whatever CDN-side alignment exists between them, typically
+    near-zero for an ordinary window and up to the PTS span of one window
+    at most for a genuine content transition.
+
+    *v_pts*/*a_pts*, if given, are used directly instead of independently
+    re-deriving them with _first_pts. Every current caller already knows
+    both exactly - they came straight from _RenditionBuffer.cut()'s return
+    when the slices being muxed here were cut - so scanning the same bytes
+    a second time here would be pure waste. Left optional (falling back to
+    _first_pts) so this function stays independently correct if ever called
+    with bytes whose PTS isn't already known by the caller.
 
     When *state* is given, the real audio segment's sample rate/channel count
     is probed once and cached on state.audio_format so later silence-injected
@@ -207,10 +415,12 @@ def _ffmpeg_mux(video_data: bytes, audio_data: 'bytes | None' = None,
                 pass
         return video_data
 
-    v_pts = _first_pts(video_data)
+    if v_pts is None:
+        v_pts = _first_pts(video_data)
     itsoffset = 0.0
     if audio_data:
-        a_pts = _first_pts(audio_data)
+        if a_pts is None:
+            a_pts = _first_pts(audio_data)
         if v_pts is not None and a_pts is not None:
             itsoffset = (v_pts - a_pts) / 90000.0
             if abs(itsoffset) > 0.020:
@@ -291,14 +501,17 @@ def _ffmpeg_mux(video_data: bytes, audio_data: 'bytes | None' = None,
 class _ChannelState:
     """Holds state accumulated while proxying one live channel."""
 
-    __slots__ = ('master_url', 'url_refresher', 'audio_url', 'variant_urls', 'segments',
+    __slots__ = ('master_url', 'url_refresher', 'audio_url', 'variant_urls',
                  'seg_duration', 'last_access', 'audio_format',
-                 '_audio_queue', '_audio_epoch', '_audio_epoch_assigned', '_video_epoch',
-                 '_last_requested_seq', '_ready_segs', '_dup_seqs',
+                 '_video_buf', '_video_cursor_pts', '_audio_bufs',
+                 '_audio_epoch', '_audio_disc_seqs_seen', '_audio_appended_seqs', '_video_epoch',
+                 '_next_chunk_seq', '_window_meta',
+                 '_last_requested_seq', '_ready_segs',
                  '_audio_prepopulated', '_provisional_segs',
                  '_audio_prefetch_thread', '_audio_prefetch_stop',
                  '_video_prefetch_thread', '_video_prefetch_stop', '_lock', '_cc_state',
-                 '_cc_resync_pending', '_last_playlist_out', '_last_segment_out')
+                 '_cc_resync_pending', '_last_playlist_out', '_last_segment_out',
+                 '_pending_audio_floors')
 
     def __init__(self, master_url: str):
         self.master_url = master_url
@@ -307,19 +520,22 @@ class _ChannelState:
         self.last_access = time.monotonic()
         self.audio_url = None
         self.variant_urls = []
-        self.segments = OrderedDict()
         self.audio_format: 'tuple[int, int] | None' = None
-        self._audio_queue: 'deque[tuple[int, int, int, bytes, float]]' = deque()
+        self._video_buf: '_RenditionBuffer | None' = None
+        self._video_cursor_pts: 'int | None' = None
+        self._audio_bufs: 'list[_RenditionBuffer]' = []
         self._audio_epoch = 0
-        self._audio_epoch_assigned: 'dict[int, int]' = {}
+        self._audio_disc_seqs_seen: 'set[int]' = set()
+        self._audio_appended_seqs: 'set[int]' = set()
         self._video_epoch = 0
+        self._next_chunk_seq = 0
+        self._window_meta: 'OrderedDict[int, _WindowMeta]' = OrderedDict()
         self._last_requested_seq = 0
         self._audio_prepopulated = False
         self._audio_prefetch_thread: 'threading.Thread | None' = None
         self._audio_prefetch_stop = threading.Event()
         self._ready_segs: 'OrderedDict[int, bytes]' = OrderedDict()
         self._provisional_segs: set = set()
-        self._dup_seqs: set = set()
         self._video_prefetch_thread: 'threading.Thread | None' = None
         self._video_prefetch_stop = threading.Event()
         self._lock = threading.Lock()
@@ -327,241 +543,7 @@ class _ChannelState:
         self._cc_resync_pending = False
         self._last_playlist_out: 'dict[int, tuple[bytes, float]]' = {}
         self._last_segment_out: 'tuple[int, bytes] | None' = None
-
-    def add_segments(self, base_seq: int, video_urls: list,
-                     key_urls: list = None, ivs: list = None):
-        """Register video segment URLs (audio is handled by the pre-fetch thread)."""
-        with self._lock:
-            for i, v in enumerate(video_urls):
-                k = key_urls[i] if key_urls and i < len(key_urls) else None
-                iv = ivs[i] if ivs and i < len(ivs) else None
-                self.segments[base_seq + i] = (v, k, iv)
-            while len(self.segments) > _MAX_SEG_CACHE:
-                self.segments.popitem(last=False)
-
-    def get_segment(self, seq: int):
-        with self._lock:
-            return self.segments.get(seq)
-
-    def pop_audio_for_pts(self, v_pts: int, epoch: int,
-                          tolerance: int = None,
-                          wait_secs: float = None,
-                          channel_id: str = '',
-                          video_seq: 'int | None' = None,
-                          allow_stale_epoch: bool = True,
-                          diag: 'dict | None' = None) -> 'tuple[int, int, bytes] | None':
-        """Find and remove the audio entry whose PTS is closest to v_pts.
-
-        *diag*, if given, is filled in (only on a None return) with
-        {'stuck_ahead': bool, 'best_diff': int | None} describing the closest
-        same-epoch candidate ever seen - lets a caller distinguish "audio for
-        this exact slot was genuinely never produced upstream" (stuck_ahead;
-        see stuck_ahead_since's own comment below) from "nothing arrived at
-        all" (e.g. a real fetch outage), instead of treating every miss alike.
-
-        Only entries tagged with the same *epoch* (the count of audio-rendition
-        discontinuities seen so far) are eligible: PTS values alone cannot be
-        trusted to identify which side of a content transition a queued entry
-        belongs to (some CDNs keep a continuous clock across the splice, and
-        the audio prefetch thread races independently of the caller), so epoch
-        equality is what actually proves "same piece of content."
-
-        Scans the whole queue so out-of-order insertions (parallel fetch workers)
-        don't cause wrong pairings.  Waits up to wait_secs seconds for a match
-        to arrive; returns (pts, seq, data) if found within tolerance ticks,
-        else None.  Defaults are derived from self.seg_duration (updated from
-        #EXTINF).
-
-        When *channel_id* is given, logs one line per call: on a match, which
-        audio seq got paired and how far its PTS was from v_pts; on a miss, a
-        full snapshot of the ring (every buffered seq/epoch/pts) so a mismatch
-        can be diagnosed straight from the log — epoch desync (ring has the
-        wrong epoch entirely) looks different from a genuine late fetch (ring
-        has the right epoch but PTS is still outside tolerance, or is empty).
-
-        Fails fast (skips the rest of wait_secs) once every ring entry has
-        moved on to a higher epoch than *epoch*: the audio-rendition disc
-        marker for that transition has already fired, so there is no future
-        in which an entry tagged with the now-passed *epoch* shows up — only
-        evicted by the time a video-side caller is stale relative to it.
-        Burning the full wait on a request that can never succeed is what
-        lets the video pre-fetch loop fall behind the live edge and miss the
-        video-side disc marker that would let its epoch counter catch up
-        (see _video_prefetch_loop's resync after a miss).
-
-        *allow_stale_epoch* gates the one-epoch-back fallback below; pass
-        False for the segment that itself carries (or was just resynced to)
-        the new epoch. Every transition on this CDN resets PTS to the same
-        small values (90000, 540000, ...), so exactly on that segment a
-        leftover entry from a separate, already-concluded prior epoch (e.g.
-        a one-segment bumper between the movie and the real ad) can
-        coincidentally land within tolerance of v_pts despite being
-        genuinely different content — the fallback must stay disabled there
-        and only re-enable once the epoch has run for at least one prior
-        segment, where a coincidental collision is no longer the common case.
-        """
-        if tolerance is None:
-            tolerance = int(self.seg_duration / 2 * 90000)
-        if wait_secs is None:
-            wait_secs = self.seg_duration * 1.6
-        wait_start = time.monotonic()
-        deadline = wait_start + wait_secs
-        snapshot: list = []
-        ring_passed_epoch_since: 'float | None' = None
-        stuck_ahead_since: 'float | None' = None
-        while True:
-            with self._lock:
-                best_idx, best_diff, best_pts = None, math.inf, None
-                snapshot = [(s, e, p) for p, e, s, _, _ in self._audio_queue]
-                for i, (pts, e, _seq, _data, _added_at) in enumerate(self._audio_queue):
-                    if e != epoch:
-                        continue
-                    diff = abs(pts - v_pts)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_idx = i
-                        best_pts = pts
-                if best_idx is not None and best_diff <= tolerance:
-                    pts, _e, aseq, data, _added_at = self._audio_queue[best_idx]
-                    del self._audio_queue[best_idx]
-                    match = (pts, aseq, data)
-                else:
-                    match = None
-                ring_passed_epoch = bool(snapshot) and min(e for _, e, _ in snapshot) > epoch
-                stuck_ahead = (best_pts is not None and best_diff > tolerance
-                               and best_pts > v_pts)
-                epoch_abandoned = self._video_epoch < epoch
-            if match is not None:
-                pts, aseq, data = match
-                if channel_id:
-                    logger.debug('%s/%s: audio match aseq=%s v_pts=%s a_pts=%s'
-                                 ' diff=%s epoch=%s waited=%.2fs',
-                                 channel_id, video_seq, aseq, v_pts, pts,
-                                 pts - v_pts, epoch, time.monotonic() - wait_start)
-                return pts, aseq, data
-            if ring_passed_epoch:
-                if ring_passed_epoch_since is None:
-                    ring_passed_epoch_since = time.monotonic()
-            else:
-                ring_passed_epoch_since = None
-            if stuck_ahead:
-                if stuck_ahead_since is None:
-                    stuck_ahead_since = time.monotonic()
-            else:
-                stuck_ahead_since = None
-            ring_passed_epoch_expired = (
-                ring_passed_epoch_since is not None
-                and (time.monotonic() - ring_passed_epoch_since
-                     >= self.seg_duration / 5 * _AUDIO_STRAGGLER_GRACE_POLLS))
-            stuck_ahead_expired = (
-                stuck_ahead_since is not None
-                and (time.monotonic() - stuck_ahead_since
-                     >= self.seg_duration / 5 * _AUDIO_STRAGGLER_GRACE_POLLS))
-            if ring_passed_epoch_expired or stuck_ahead_expired or epoch_abandoned or time.monotonic() >= deadline:
-                if epoch > 0 and allow_stale_epoch:
-                    with self._lock:
-                        best_idx, best_diff = None, tolerance + 1
-                        for i, (pts, e, _seq, _data, _added_at) in enumerate(self._audio_queue):
-                            if e != epoch - 1:
-                                continue
-                            diff = abs(pts - v_pts)
-                            if diff < best_diff:
-                                best_diff = diff
-                                best_idx = i
-                        if best_idx is not None and best_diff <= tolerance:
-                            pts, _e, aseq, data, _added_at = self._audio_queue[best_idx]
-                            del self._audio_queue[best_idx]
-                            stale_match = (pts, aseq, data)
-                        else:
-                            stale_match = None
-                    if stale_match is not None:
-                        pts, aseq, data = stale_match
-                        if channel_id:
-                            logger.debug('%s/%s: audio match aseq=%s v_pts=%s a_pts=%s'
-                                         ' diff=%s epoch=%s->%s waited=%.2fs (stale-epoch fallback)',
-                                         channel_id, video_seq, aseq, v_pts, pts,
-                                         pts - v_pts, epoch - 1, epoch, time.monotonic() - wait_start)
-                        return pts, aseq, data
-                if channel_id:
-                    ring = ', '.join(
-                        f'aseq={s} epoch={e} pts={p} diff={p - v_pts}'
-                        for s, e, p in snapshot
-                    ) or 'empty'
-                    logger.debug('%s/%s: audio MISS v_pts=%s epoch=%s tolerance=%s'
-                                 ' waited=%.2fs/%.2fs ring_passed_epoch=%s'
-                                 ' stuck_ahead_expired=%s epoch_abandoned=%s ring=[%s]',
-                                 channel_id, video_seq, v_pts, epoch, tolerance,
-                                 time.monotonic() - wait_start, wait_secs, ring_passed_epoch,
-                                 stuck_ahead_expired, epoch_abandoned, ring)
-                if diag is not None:
-                    diag['stuck_ahead'] = stuck_ahead_expired
-                    diag['best_diff'] = best_diff if best_pts is not None else None
-                return None
-            time.sleep(0.1)
-
-    def ring_max_epoch(self) -> 'int | None':
-        """Highest epoch currently buffered in the audio ring, or None if empty.
-
-        Used by _video_prefetch_loop to detect that its local video_epoch has
-        overtaken the audio side (e.g. the video rendition flagged a disc that
-        the audio rendition never mirrored) so it can resync back down instead
-        of waiting out the full audio-wait budget on every segment forever.
-        """
-        with self._lock:
-            if not self._audio_queue:
-                return None
-            return max(e for _, e, _, _, _ in self._audio_queue)
-
-    def assign_audio_epoch(self, seq: int, disc: bool) -> int:
-        """Resolve the epoch for audio segment *seq*, exactly once per
-        recent occurrence of that seq number (see _SEQ_REPROCESS_WINDOW).
-
-        Bumps the shared counter first when *disc* is True (an
-        #EXT-X-DISCONTINUITY immediately precedes *seq* in the audio
-        rendition) - but only the first time *seq* is seen within the
-        window. The one-shot playlist pre-population pass
-        (_handle_playlist) and the ongoing background audio pre-fetch
-        thread (_audio_prefetch_loop) both parse the same audio playlist
-        independently and both start from the very first segment -
-        without this de-dup, whichever of the two runs second would call
-        this again for the same early segments and double-bump
-        _audio_epoch for one real transition, desyncing it from
-        video_epoch. A plain counter with only a lock (the previous
-        implementation) doesn't prevent this: the lock makes each call
-        atomic, but two callers each resolving seq 0..N in their own loop
-        will each bump the counter once per real disc tag they encounter
-        in that range, regardless of the other caller having already done
-        the same for the same seqs.
-
-        The window must stay narrow (_SEQ_REPROCESS_WINDOW, matching what
-        _audio_prefetch_loop's own fetched_seqs and _video_prefetch_loop's
-        fetched_seqs/bumped_disc_seqs already use for this exact seq) and
-        not the much wider _MAX_SEG_CACHE this used previously: some Pluto
-        channels serve a stitched ad-pod/filler loop whose playlist
-        media-sequence numbers wrap back down and repeat rather than
-        growing monotonically forever, and a wide window made a repeated
-        seq permanently reuse whatever epoch (and disc decision) its
-        first-ever occurrence resolved to - silently ignoring every real
-        #EXT-X-DISCONTINUITY tag on that seq number in every later loop.
-        That left _audio_epoch stuck for minutes while video_epoch (whose
-        own dedup already used the narrow window) correctly kept
-        advancing across each real repeated transition, which in turn
-        made add_audio prune every freshly-fetched real audio segment as
-        too far behind video_epoch - observed in production as most of a
-        channel's audio being muxed with silence for minutes at a time.
-        """
-        with self._lock:
-            if seq in self._audio_epoch_assigned:
-                return self._audio_epoch_assigned[seq]
-            if disc:
-                self._audio_epoch += 1
-            epoch = self._audio_epoch
-            self._audio_epoch_assigned[seq] = epoch
-            self._audio_epoch_assigned = {
-                s: e for s, e in self._audio_epoch_assigned.items()
-                if s >= seq - _SEQ_REPROCESS_WINDOW
-            }
-            return epoch
+        self._pending_audio_floors: 'list[tuple[int, int]]' = []
 
     def current_audio_epoch(self) -> int:
         """Thread-safe read of the current epoch, with no side effects."""
@@ -573,12 +555,14 @@ class _ChannelState:
 
         Returns True for the first caller only; every later call (including
         concurrent ones racing on the first request) returns False. Must be
-        a real flag rather than checking len(_audio_queue) == 0: the ring
-        legitimately drains to empty for a moment at every real content
-        transition, and re-running this block then would re-parse the same
-        still-in-window #EXT-X-DISCONTINUITY tag the live audio pre-fetch
-        thread already counted, double-bumping _audio_epoch for one real
-        transition and permanently desyncing it from video_epoch.
+        a real flag rather than inferring "not yet run" from buffer state
+        (e.g. state._audio_bufs being empty): a fresh channel legitimately
+        has no audio buffer yet for reasons unrelated to whether
+        pre-population has run, and re-running this block would re-parse the
+        same still-in-window #EXT-X-DISCONTINUITY tag the live audio
+        pre-fetch thread already counted, double-bumping _audio_epoch for
+        one real transition (see _append_audio's own dedup, which this flag
+        complements at a coarser, whole-pass granularity).
         """
         with self._lock:
             if self._audio_prepopulated:
@@ -587,9 +571,12 @@ class _ChannelState:
             return True
 
     def set_video_epoch(self, epoch: int):
-        """Record _video_prefetch_loop's current epoch so add_audio can
-        evict ring entries that have fallen behind it immediately, instead
-        of waiting on _MAX_AUDIO_EPOCH_LAG or the ring's size cap.
+        """Record _video_prefetch_loop's current epoch on shared state, so a
+        respawned thread instance can resume from it - see
+        current_video_epoch()'s own docstring. Not read by anything else:
+        buffer selection/pruning today is keyed by _RenditionBuffer.epoch
+        directly (see _slice_audio_for_window/_prune_audio_bufs), not by
+        comparing against this mirrored value.
         """
         with self._lock:
             self._video_epoch = epoch
@@ -627,80 +614,6 @@ class _ChannelState:
         with self._lock:
             return self._last_requested_seq
 
-    def add_audio(self, pts: int, epoch: int, seq: int, data: bytes):
-        """Append an audio segment to the queue; drop stale or excess entries.
-
-        No-ops if *seq* is already queued: the synchronous pre-population
-        pass (first playlist request) and the background audio pre-fetch
-        thread each fetch independently with their own dedup set, so on
-        startup both can land the same initial segments — whichever calls
-        add_audio first wins, the second is a no-op rather than a stale
-        duplicate that never gets consumed.
-
-        Entries more than _MAX_AUDIO_EPOCH_LAG epochs behind the current
-        audio epoch are pruned unconditionally, not just when the ring is
-        over capacity, and so is anything more than _MAX_AUDIO_EPOCH_LAG
-        behind the video loop's own current epoch (see set_video_epoch): a
-        video-side lookup only ever matches the *current* epoch, so once
-        video has moved permanently past N, nothing tagged epoch N can ever
-        be consumed again, regardless of how recently it arrived.
-
-        The video_epoch comparison uses the same lag tolerance as the
-        audio_epoch one rather than an exact cutoff, on purpose: some ad
-        pods carry a separate #EXT-X-DISCONTINUITY per stitched creative on
-        the video rendition while the audio rendition tags far fewer of the
-        same boundaries, so video_epoch can legitimately run 1-2 epochs
-        ahead of whatever epoch fresh audio is currently arriving tagged
-        with. An exact (zero-lag) cutoff there discards every fresh audio
-        entry the instant it's added — before any video-side lookup, or the
-        stale-epoch fallback in pop_audio_for_pts, can ever consume it —
-        observed in production as several minutes of continuous silence
-        that outlasted the ad pod itself. _video_prefetch_loop's resync
-        check reads current_audio_epoch() directly rather than ring
-        contents, so it isn't blocked by this lag; the tolerance here exists
-        so pop_audio_for_pts still has something to find via the
-        stale-epoch fallback (and ring_max_epoch() has real data for the
-        short-wait check) while that resync — or the ordinary one-epoch
-        tag-delay it's usually just waiting out — catches up.
-        """
-        with self._lock:
-            if any(s == seq for _, _, s, _, _ in self._audio_queue):
-                return
-            self._audio_queue.append((pts, epoch, seq, data, time.monotonic()))
-            max_age = self.seg_duration * _LATE_AUDIO_WAIT_FACTOR
-            while (self._audio_queue
-                    and (self._audio_queue[0][1] < self._audio_epoch - _MAX_AUDIO_EPOCH_LAG
-                         or self._audio_queue[0][1] < self._video_epoch - _MAX_AUDIO_EPOCH_LAG
-                         or time.monotonic() - self._audio_queue[0][4] > max_age)):
-                self._audio_queue.popleft()
-            while len(self._audio_queue) > _MAX_AUDIO_RING:
-                self._audio_queue.popleft()
-
-    def mark_duplicate(self, seq: int):
-        """Record that *seq*'s video repeats the prior segment's video.
-
-        _handle_playlist consults this to omit the segment from what it
-        serves Enigma2, instead of advertising a chunk that would just play
-        the same content over again.
-        """
-        with self._lock:
-            self._dup_seqs.add(seq)
-            self._dup_seqs = {s for s in self._dup_seqs if s >= seq - _SEQ_REPROCESS_WINDOW}
-
-    def is_duplicate(self, seq: int) -> bool:
-        with self._lock:
-            return seq in self._dup_seqs
-
-    def is_ready(self, seq: int) -> bool:
-        """True once the video prefetch loop has actually processed *seq*
-        (present in _ready_segs) - see _handle_playlist's use for why this
-        matters beyond just "has content": is_duplicate(seq) is only
-        meaningful once processing has completed, since mark_duplicate is
-        called from the same iteration that populates _ready_segs.
-        """
-        with self._lock:
-            return seq in self._ready_segs
-
     def has_ready_segs(self) -> bool:
         """True once the video prefetch loop has produced anything at all.
 
@@ -715,48 +628,74 @@ class _ChannelState:
 
     def mark_provisional(self, seq: int):
         """Record that _ready_segs[seq] is a silence-muxed placeholder with a
-        _resolve_late_audio upgrade in flight, not the final AV mux.
+        _resolve_late_audio_window upgrade in flight, not the final AV mux.
 
         _handle_segment consults this so its existing wait loop actually
         waits for the upgrade instead of returning the placeholder the
         instant it sees any bytes at all in _ready_segs[seq].
+
+        No self-pruning here (unlike the seq-keyed dedup sets elsewhere in
+        this file): *seq* is chunk_seq, this proxy's own monotonic counter,
+        which - unlike a CDN media-sequence number - never wraps or repeats,
+        so there's no stale-reuse hazard to guard against by age. Entries
+        are removed only by the matching clear_provisional() call, which
+        _resolve_late_audio_window always makes exactly once, in its
+        finally block, regardless of outcome - pruning by age here as well
+        would risk dropping a still-genuinely-provisional entry early
+        (e.g. during a burst of several transitions close together) and
+        letting _handle_segment treat an unresolved upgrade as finished.
         """
         with self._lock:
             self._provisional_segs.add(seq)
-            self._provisional_segs = {
-                s for s in self._provisional_segs if s >= seq - _SEQ_REPROCESS_WINDOW
-            }
 
     def clear_provisional(self, seq: int):
-        """Mark seq's _resolve_late_audio retry concluded (upgraded or not)."""
+        """Mark seq's _resolve_late_audio_window retry concluded (upgraded or not)."""
         with self._lock:
             self._provisional_segs.discard(seq)
 
-    def is_provisional(self, seq: int) -> bool:
-        with self._lock:
-            return seq in self._provisional_segs
+    def add_pending_audio_floor(self, epoch: int, start_pts: int):
+        """Register that a _resolve_late_audio_window retry is still waiting
+        to cover [start_pts, ...) of *epoch*'s audio buffer.
 
-    def invalidate_segment(self, seq: int):
-        """Drop any existing _ready_segs[seq] before reprocessing that seq.
-
-        Some Pluto channels wrap their live playlist's media-sequence
-        numbers back down and reuse them (see _SEQ_REPROCESS_WINDOW) - once
-        a seq ages out of fetched_seqs's narrow dedup window, the loop
-        below correctly treats a reappearance as a brand new segment and
-        re-fetches/re-muxes it. But without this, the *stale* entry from
-        the seq's earlier, completely different appearance stays sitting in
-        _ready_segs, fully servable by _handle_segment's fast path, for the
-        entire re-fetch+re-mux duration - a real request landing in that
-        window gets the wrong (old) segment's bytes under the right-looking
-        URL. Confirmed in production: exactly this made a live channel
-        appear to flip between an ad and the real program and back,
-        segment requests for the same reused seq number resolving to
-        whichever generation of _ready_segs[seq] happened to be current at
-        request time.
+        See audio_trim_floor - a later window's own successful audio match
+        on the same buffer must not trim away bytes this retry still needs,
+        even though the trim is otherwise perfectly safe from the later
+        window's own point of view.
         """
         with self._lock:
-            self._ready_segs.pop(seq, None)
-            self._provisional_segs.discard(seq)
+            self._pending_audio_floors.append((epoch, start_pts))
+
+    def remove_pending_audio_floor(self, epoch: int, start_pts: int):
+        """Undo add_pending_audio_floor once a retry concludes, either way."""
+        with self._lock:
+            try:
+                self._pending_audio_floors.remove((epoch, start_pts))
+            except ValueError:
+                pass
+
+    def audio_trim_floor(self, epoch: int, requested_pts: int) -> int:
+        """Clamp a trim point to never go past any still-in-flight
+        _resolve_late_audio_window retry's own start_pts for *epoch*.
+
+        Without this, _slice_audio_for_window's trim_before() call - made
+        on every successful match, including one found by a *later* window
+        while an *earlier* window's background retry is still polling the
+        same shared buffer - can delete the earlier window's still-needed
+        range out from under it. The lock inside trim_before/append
+        prevents the two calls from corrupting the buffer concurrently, but
+        does nothing to stop this logical data loss: the earlier retry then
+        exhausts its whole wait budget and reports "no audio ever covered
+        this window" even though matching audio genuinely arrived - it was
+        just consumed by the later window's own trim first.
+
+        Caller must already hold self._lock: its one call site
+        (_slice_audio_for_window) reads/trims the same buffer under that
+        same lock, and self._lock is a plain Lock, not an RLock - a second,
+        nested acquisition here would deadlock the thread against itself,
+        not just race another one.
+        """
+        pending = [p for e, p in self._pending_audio_floors if e == epoch]
+        return min([requested_pts] + pending) if pending else requested_pts
 
     def close(self):
         """Signal all pre-fetch threads to stop and wait for them to exit."""
@@ -915,16 +854,324 @@ def _ensure_pipeline(channel_id: str, state: '_ChannelState') -> bool:
     return True
 
 
-def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
-    """Background thread: continuously fill the per-channel audio PTS ring.
+def _prune_audio_bufs(state: '_ChannelState'):
+    """Bound state._audio_bufs to the current epoch's buffer plus
+    _AUDIO_BUFFER_RETAIN_EPOCHS closed ones, additionally dropping any
+    closed buffer older than seg_duration * _LATE_AUDIO_WAIT_FACTOR -
+    mirrors the depth/age bounds the old audio ring (_MAX_AUDIO_RING /
+    _MAX_AUDIO_EPOCH_LAG / add_audio's max_age pruning) used to enforce.
 
-    Polls the audio rendition playlist, fetches any segments not yet in the
-    ring, decrypts them if necessary, reads their first PTS, and stores them
-    as  (pts, epoch, bytes)  entries.  epoch is bumped whenever a segment is
-    preceded by #EXT-X-DISCONTINUITY, so video-side lookups can refuse to pair
-    across a content transition even when PTS values alone would suggest a
-    plausible match.  Old entries are evicted (oldest first) when the ring
-    reaches _MAX_AUDIO_RING so memory stays bounded.
+    Also caps every buffer - open or closed - to _MAX_AUDIO_BUFFER_BYTES
+    regardless of whether it's ever been successfully matched: the
+    depth/age bounds above only ever apply to a *closed* buffer, and
+    trim_before() only ever shrinks one in response to a successful cut,
+    so the *current* (open) buffer would otherwise grow without bound for
+    as long as it keeps failing to match anything (see
+    _MAX_AUDIO_EPOCH_LAG's resync, which should normally prevent that
+    situation from lasting long enough for this cap to matter at all).
+
+    Caller must hold state._lock.
+    """
+    for b in state._audio_bufs:
+        b.trim_to_max_bytes(_MAX_AUDIO_BUFFER_BYTES)
+    max_age = state.seg_duration * _LATE_AUDIO_WAIT_FACTOR
+    now = time.monotonic()
+    kept = []
+    closed_kept = 0
+    for b in state._audio_bufs:
+        if b.closed_at is None:
+            kept.append(b)
+            continue
+        if now - b.closed_at > max_age:
+            continue
+        if closed_kept >= _AUDIO_BUFFER_RETAIN_EPOCHS:
+            continue
+        kept.append(b)
+        closed_kept += 1
+    state._audio_bufs = kept
+
+
+def _append_audio(state: '_ChannelState', channel_id: str, seq: int, disc: bool, data: bytes):
+    """Append a freshly-fetched, decrypted audio segment's bytes into the
+    current (or a freshly-opened) audio _RenditionBuffer.
+
+    Mirrors the old assign_audio_epoch's exactly-once-per-seq disc dedup
+    (see _SEQ_REPROCESS_WINDOW) via state._audio_disc_seqs_seen, and the old
+    add_audio's already-queued dedup (both the one-shot playlist
+    pre-population pass and the ongoing background audio pre-fetch thread
+    parse the same playlist independently and both start from the first
+    segment) via state._audio_appended_seqs - without the latter, the two
+    could append the same seq's bytes twice into a buffer, corrupting its
+    PTS index.
+
+    Callers must invoke this in strictly ascending *seq* order relative to
+    each other (see _audio_prefetch_loop's and _handle_playlist's own
+    ordering) - _RenditionBuffer.append requires appends to arrive in PTS
+    order to keep its index valid; unlike the old flat, order-independent
+    audio ring, a continuous buffer cannot tolerate out-of-order writes.
+
+    The expensive PTS/PAT-PMT scan runs before state._lock is taken (see
+    _scan_ts_index's own docstring for why).
+    """
+    pts_offsets, pat_pmt = _scan_ts_index(data)
+    if not pts_offsets:
+        logger.debug('%s/%s: Event: no PTS found in audio segment'
+                     ' | Action: drop, not appended to buffer', channel_id, seq)
+        return
+    with state._lock:
+        if seq in state._audio_appended_seqs:
+            return
+        state._audio_appended_seqs.add(seq)
+        state._audio_appended_seqs = {
+            s for s in state._audio_appended_seqs if s >= seq - _SEQ_REPROCESS_WINDOW
+        }
+        if disc and seq not in state._audio_disc_seqs_seen:
+            state._audio_epoch += 1
+            for b in state._audio_bufs:
+                b.mark_closed()
+            state._audio_bufs.insert(0, _RenditionBuffer(state._audio_epoch, is_disc_epoch=True))
+        state._audio_disc_seqs_seen.add(seq)
+        state._audio_disc_seqs_seen = {
+            s for s in state._audio_disc_seqs_seen if s >= seq - _SEQ_REPROCESS_WINDOW
+        }
+        if not state._audio_bufs:
+            state._audio_bufs.insert(0, _RenditionBuffer(state._audio_epoch, is_disc_epoch=False))
+        state._audio_bufs[0].append(data, pts_offsets, pat_pmt)
+        _prune_audio_bufs(state)
+
+
+def _slice_audio_for_window(state: '_ChannelState', epoch: int, start_pts: int, end_pts: int,
+                            is_disc_window: bool, wait_secs: 'float | None' = None,
+                            channel_id: str = '', chunk_seq: 'int | None' = None
+                            ) -> 'tuple[bytes | None, int | None, bool]':
+    """Slice audio bytes covering [start_pts, end_pts) for one output window.
+
+    Replaces pop_audio_for_pts's discrete nearest-match search: searches
+    state._audio_bufs for a buffer tagged *epoch* (or one epoch back,
+    unless *is_disc_window* - the same reset-PTS coincidence-risk exemption
+    pop_audio_for_pts gated via allow_stale_epoch) whose continuous PTS
+    index already covers the full requested range, waiting up to
+    *wait_secs* for a buffer to catch up. *is_disc_window* only affects the
+    stale-epoch gating here - callers pass their own explicit *wait_secs*
+    for the disc case (see _cut_and_mux_next_window's short bounded
+    _DISC_AUDIO_PEEK_WAIT and _resolve_late_audio_window's much longer
+    _LATE_AUDIO_WAIT_FACTOR budget); the state.seg_duration*1.6 default
+    below only actually applies to an ordinary, non-disc window whose
+    caller didn't specify one. Returns (sliced_bytes, actual_a_start_pts,
+    True) on success - the middle value lets a caller feed _ffmpeg_mux's
+    itsoffset calculation directly instead of re-deriving it with a second
+    _first_pts scan over bytes already fully indexed here - or
+    (None, None, False) on timeout.
+
+    Unlike the old segment-granularity match, there is no "nearest but
+    outside tolerance" concept here: either some buffer's continuous index
+    already spans the exact range needed, or it doesn't yet (worth
+    retrying) or never will (a genuine content gap - see silence-injection
+    fallback in _ffmpeg_mux).
+    """
+    if wait_secs is None:
+        wait_secs = state.seg_duration * 1.6
+    deadline = time.monotonic() + wait_secs
+    snapshot = ''
+    while True:
+        with state._lock:
+            candidates = [b for b in state._audio_bufs if b.epoch == epoch]
+            if not is_disc_window:
+                candidates += [b for b in state._audio_bufs if b.epoch == epoch - 1]
+            for b in candidates:
+                cut = b.cut(start_pts, end_pts)
+                if cut is not None:
+                    data, a_start, _a_end = cut
+                    b.trim_before(state.audio_trim_floor(b.epoch, a_start))
+                    if channel_id:
+                        stale = ' (stale-epoch fallback)' if b.epoch != epoch else ''
+                        logger.debug('%s/%s: audio window matched epoch=%s pts=[%s,%s)%s',
+                                     channel_id, chunk_seq, b.epoch, start_pts, end_pts, stale)
+                    return data, a_start, True
+            snapshot = ', '.join(
+                f'epoch={b.epoch} pts=[{b.pts_list[0]},{b.pts_list[-1]}] n={len(b.pts_list)}'
+                if b.pts_list else f'epoch={b.epoch} empty'
+                for b in state._audio_bufs
+            ) or 'no buffers held'
+        if time.monotonic() >= deadline:
+            if channel_id:
+                logger.debug('%s/%s: audio MISS window epoch=%s pts=[%s,%s) waited=%.2fs'
+                             ' is_disc_window=%s buffers=[%s]',
+                             channel_id, chunk_seq, epoch, start_pts, end_pts, wait_secs,
+                             is_disc_window, snapshot)
+            return None, None, False
+        time.sleep(0.1)
+
+
+def _resolve_late_audio_window(channel_id: str, state: '_ChannelState', chunk_seq: int,
+                               video_slice: bytes, epoch: int, start_pts: int, end_pts: int,
+                               is_disc_window: bool):
+    """Background retry for a window whose audio wasn't covered yet at cut
+    time - replaces _resolve_late_audio, retargeted at a PTS range instead
+    of a single discrete segment match.
+
+    Runs off the critical path with the extended _LATE_AUDIO_WAIT_FACTOR
+    budget, giving the audio rendition's own disc tag (or just ordinary CDN
+    fetch lag) extra time to catch up; if the range becomes coverable in
+    time and Enigma2 hasn't already been served the silence version, it
+    re-muxes and overwrites state._ready_segs[chunk_seq] in place.
+    """
+    try:
+        aslice, a_pts, covered = _slice_audio_for_window(
+            state, epoch, start_pts, end_pts, is_disc_window,
+            wait_secs=state.seg_duration * _LATE_AUDIO_WAIT_FACTOR,
+            channel_id=channel_id, chunk_seq=chunk_seq)
+        with state._lock:
+            if chunk_seq not in state._ready_segs:
+                return
+        if not covered:
+            logger.debug('%s/%s: Event: no audio ever covered this window'
+                         ' (kept as silence) | epoch=%s pts=[%s,%s)',
+                         channel_id, chunk_seq, epoch, start_pts, end_pts)
+            return
+        muxed = _ffmpeg_mux(video_slice, aslice, state, is_disc=is_disc_window, track_cc=False,
+                            v_pts=start_pts, a_pts=a_pts)
+        with state._lock:
+            if chunk_seq in state._ready_segs:
+                state._ready_segs[chunk_seq] = muxed
+                state._cc_resync_pending = True
+                logger.debug('%s/%s: late-audio window upgrade applied', channel_id, chunk_seq)
+    finally:
+        state.clear_provisional(chunk_seq)
+        state.remove_pending_audio_floor(epoch, start_pts)
+
+
+def _cut_and_mux_next_window(channel_id: str, state: '_ChannelState') -> bool:
+    """Cut one output window covering everything currently buffered in
+    state._video_buf from the cursor on, slice matching audio, mux, and
+    publish to state._ready_segs.
+
+    Replaces the old per-CDN-segment mux call in _video_prefetch_loop.
+    Deliberately cuts by *CDN segment boundary*, not by a fixed target
+    duration: an HLS video segment is guaranteed self-contained (its own
+    SPS/PPS and a leading IDR/keyframe), which is exactly why the old
+    per-segment design never had a decode problem on the video side in the
+    first place. Cutting at an arbitrary fixed-duration PTS boundary
+    instead (an earlier version of this function did exactly that) breaks
+    that guarantee: a window frequently starts mid-GOP with no leading
+    keyframe, and sometimes with no SPS/PPS NAL in range at all - confirmed
+    in production as periodic video freezes (decoder has nothing
+    displayable until the next real keyframe) and outright _ffmpeg_mux
+    failures ("non-existing PPS 0 referenced", rc=234, 0 bytes output,
+    silently falling back to video-only - the exact video_data-only path
+    _ffmpeg_mux's docstring already flags as worse than the mismatch it
+    exists to paper over). Cutting at CDN segment boundaries restores that
+    guarantee while still sourcing audio from the continuous buffer for
+    whatever exact PTS range this video segment covers - audio no longer
+    needs to be a matching *discrete segment*, just a PTS-range slice,
+    which is the actual fix the windowed-buffer redesign was for; nothing
+    about that benefit depends on how video's own boundaries are chosen.
+
+    state._video_buf/_video_cursor_pts are touched only by the video
+    prefetch thread (this function is only ever called synchronously from
+    that same thread), so - like state._cc_state - they need no lock of
+    their own; only the state._ready_segs/_window_meta/_next_chunk_seq
+    publish step below is shared with HTTP handler threads and
+    _resolve_late_audio_window, and is locked accordingly.
+
+    Returns True if a window was produced, False if there was nothing new
+    to cut (e.g. called again with no new append since the last call).
+    """
+    vbuf = state._video_buf
+    cursor = state._video_cursor_pts
+    if vbuf is None or cursor is None:
+        return False
+    cut = vbuf.cut(cursor, None)
+    if cut is None:
+        return False
+    vslice, actual_start, actual_end = cut
+    if actual_end <= actual_start:
+        return False
+
+    is_disc = vbuf.is_disc_epoch and not vbuf.first_window_emitted
+    vbuf.first_window_emitted = True
+
+    aslice, a_pts, covered = _slice_audio_for_window(
+        state, vbuf.epoch, actual_start, actual_end, is_disc_window=is_disc,
+        wait_secs=(_DISC_AUDIO_PEEK_WAIT if is_disc else None),
+        channel_id=channel_id)
+
+    reset_cc = is_disc
+    with state._lock:
+        if state._cc_resync_pending:
+            reset_cc = True
+            state._cc_resync_pending = False
+    muxed = _ffmpeg_mux(vslice, aslice, state, is_disc=is_disc, track_cc=True, reset_cc=reset_cc,
+                        v_pts=actual_start, a_pts=a_pts)
+
+    with state._lock:
+        chunk_seq = state._next_chunk_seq
+        state._next_chunk_seq += 1
+        state._ready_segs[chunk_seq] = muxed
+        state._window_meta[chunk_seq] = _WindowMeta(vbuf.epoch, actual_start, actual_end, is_disc)
+        while len(state._ready_segs) > _MAX_SEG_CACHE:
+            k, _ = state._ready_segs.popitem(last=False)
+            state._window_meta.pop(k, None)
+
+    logger.debug('%s/%s: Event: window cut epoch=%s pts=[%s,%s) is_disc=%s audio_covered=%s'
+                 ' | Action: mux (%s bytes)',
+                 channel_id, chunk_seq, vbuf.epoch, actual_start, actual_end, is_disc, covered,
+                 len(muxed))
+
+    if not covered:
+        state.mark_provisional(chunk_seq)
+        state.add_pending_audio_floor(vbuf.epoch, actual_start)
+        threading.Thread(
+            target=_resolve_late_audio_window,
+            args=(channel_id, state, chunk_seq, vslice, vbuf.epoch, actual_start, actual_end, is_disc),
+            daemon=True,
+            name=f'PlutoLateAudio-{channel_id[:8]}-{chunk_seq}',
+        ).start()
+
+        audio_epoch_now = state.current_audio_epoch()
+        if audio_epoch_now > vbuf.epoch:
+            logger.debug('%s/%s: Event: audio_epoch already ahead of video_epoch'
+                         ' (video rendition never flagged this transition) | Action:'
+                         ' resync video_epoch %s -> %s',
+                         channel_id, chunk_seq, vbuf.epoch, audio_epoch_now)
+            vbuf.mark_closed()
+            state._video_buf = _RenditionBuffer(audio_epoch_now, is_disc_epoch=False)
+            state._video_cursor_pts = None
+            state.set_video_epoch(audio_epoch_now)
+            with state._lock:
+                state._cc_resync_pending = True
+            return True
+        if vbuf.epoch - audio_epoch_now >= _MAX_AUDIO_EPOCH_LAG:
+            logger.debug('%s/%s: Event: audio_epoch persistently behind video_epoch'
+                         ' by >= %s (missed audio-side disc marker) | Action:'
+                         ' resync video_epoch %s -> %s',
+                         channel_id, chunk_seq, _MAX_AUDIO_EPOCH_LAG, vbuf.epoch, audio_epoch_now)
+            vbuf.mark_closed()
+            state._video_buf = _RenditionBuffer(audio_epoch_now, is_disc_epoch=False)
+            state._video_cursor_pts = None
+            state.set_video_epoch(audio_epoch_now)
+            with state._lock:
+                state._cc_resync_pending = True
+            return True
+
+    state._video_cursor_pts = vbuf.pts_list[-1]
+    vbuf.trim_before(actual_start, retain_bytes=_VIDEO_BUFFER_RETAIN_MARGIN_BYTES)
+    return True
+
+
+def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
+    """Background thread: continuously fetch new audio segments and append
+    them, in seq order, to the per-channel continuous audio buffer(s).
+
+    Polls the audio rendition playlist, fetches any segments not yet
+    appended, decrypts them if necessary, and hands each to _append_audio
+    (which resolves/bumps the audio epoch and opens a fresh _RenditionBuffer
+    on a real #EXT-X-DISCONTINUITY). Segments are fetched in parallel via
+    _AUDIO_FETCH_WORKERS, but appended to the buffer strictly in seq order
+    once the whole poll's batch has finished fetching - _RenditionBuffer's
+    PTS index requires ascending-PTS appends to stay valid, unlike the old
+    flat, order-independent audio ring, which tolerated parallel workers
+    finishing in any order.
     """
     fetched_seqs: set[int] = set()
     stale_aseq_base: 'int | None' = None
@@ -970,8 +1217,7 @@ def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
                 k = audio_key_urls[i] if i < len(audio_key_urls) else None
                 iv = audio_ivs[i] if i < len(audio_ivs) else None
                 disc = audio_discs[i] if i < len(audio_discs) else False
-                epoch = state.assign_audio_epoch(seq, disc)
-                to_fetch.append((seq, url, k, iv, epoch))
+                to_fetch.append((seq, url, k, iv, disc))
 
         if not to_fetch:
             if bound_hit_at is not None:
@@ -997,7 +1243,9 @@ def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
         stale_aseq_base = None
         stale_since = None
 
-        def _fetch_one(seq, url, key_url, iv_explicit, epoch):
+        results: dict = {}
+
+        def _fetch_one(seq, url, key_url, iv_explicit):
             fail_reason = None
             for _attempt in range(2):
                 try:
@@ -1015,15 +1263,13 @@ def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
                     if not adata or adata[0] != 0x47:
                         fail_reason = 'failed to decrypt/parse (bad sync byte)'
                         continue
-                    pts = _first_pts(adata)
-                    if pts is None:
+                    if not _scan_ts_index(adata)[0]:
                         fail_reason = 'no PTS found in decrypted segment'
                         continue
                     if _attempt > 0:
                         logger.debug('%s/%s: Event: audio segment recovered on retry'
                                      ' (attempt 1 failed: %s)', channel_id, seq, fail_reason)
-                    state.add_audio(pts, epoch, seq, adata)
-                    fetched_seqs.add(seq)
+                    results[seq] = adata
                     return
                 except Exception as exc:
                     fail_reason = f'{type(exc).__name__}: {exc}'
@@ -1034,91 +1280,42 @@ def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
 
         workers = min(_AUDIO_FETCH_WORKERS, len(to_fetch))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for args in to_fetch:
-                pool.submit(_fetch_one, *args)
+            for seq, url, k, iv, _disc in to_fetch:
+                pool.submit(_fetch_one, seq, url, k, iv)
+        for seq, _url, _k, _iv, disc in to_fetch:
+            adata = results.get(seq)
+            if adata is None:
+                continue
+            _append_audio(state, channel_id, seq, disc, adata)
+            fetched_seqs.add(seq)
 
         if state._audio_prefetch_stop.wait(timeout=state.seg_duration / 5):
             break
 
 
-def _resolve_late_audio(channel_id: str, state: '_ChannelState', seq: int,
-                        vdata: bytes, v_pts: int, epoch: int,
-                        allow_stale_epoch: bool = False):
-    """Background upgrade for a segment muxed with silence after a zero-wait peek.
-
-    _video_prefetch_loop takes a zero-wait peek at the audio ring — for the
-    segment that itself introduces a new epoch, and for every later segment
-    in that same epoch once one such peek has already confirmed it empty
-    (see epoch_known_empty) — so a slow audio fetch never stalls the loop.
-    This runs off to the side with the extended seg_duration ×
-    _LATE_AUDIO_WAIT_FACTOR budget, giving the audio rendition's own disc tag
-    for the same transition extra time to catch up with the video
-    rendition's; if the same-epoch audio turns up in time and Enigma2
-    hasn't already been served the silence version, it re-muxes and
-    overwrites state._ready_segs[seq]
-    in place. Safe to wait this long because it never blocks the critical
-    path — only handle_segment's own deadline (sized to roughly match this
-    budget) determines whether that window actually elapses before
-    Enigma2's request forces a decision.
-
-    *allow_stale_epoch* must stay False when this is the segment that itself
-    just introduced *epoch*: every transition resets PTS to the same small
-    values, so right there a leftover entry from a separate, already-
-    concluded epoch can coincidentally land within tolerance despite being
-    genuinely different content. The caller passes True for later segments
-    in an already-running epoch, where that coincidence risk doesn't apply.
-    """
-    try:
-        diag: dict = {}
-        audio_pair = state.pop_audio_for_pts(
-            v_pts, epoch, wait_secs=state.seg_duration * _LATE_AUDIO_WAIT_FACTOR,
-            channel_id=channel_id, video_seq=seq, allow_stale_epoch=allow_stale_epoch,
-            diag=diag)
-        if audio_pair is None:
-            if diag.get('stuck_ahead'):
-                logger.debug('%s/%s: Event: no audio ever found for this segment'
-                             ' (confirmed sliver: closest candidate stuck %s ticks ahead,'
-                             ' kept as silence) | epoch=%s v_pts=%s',
-                             channel_id, seq, diag.get('best_diff'), epoch, v_pts)
-            else:
-                logger.debug('%s/%s: Event: no audio ever found for this segment'
-                             ' (unverified - not a confirmed sliver, kept as silence)'
-                             ' | epoch=%s v_pts=%s best_diff=%s',
-                             channel_id, seq, epoch, v_pts, diag.get('best_diff'))
-            return
-        with state._lock:
-            if seq not in state._ready_segs:
-                return
-        _a_pts, a_seq, adata = audio_pair
-        muxed = _ffmpeg_mux(vdata, adata, state, is_disc=True, track_cc=False)
-        with state._lock:
-            if seq in state._ready_segs:
-                state._ready_segs[seq] = muxed
-                state._cc_resync_pending = True
-                logger.debug('%s/%s: late-audio upgrade applied (aseq=%s)',
-                             channel_id, seq, a_seq)
-    finally:
-        state.clear_provisional(seq)
-
-
 def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
                          variant_idx: int):
-    """Background thread: pre-fetch video segments, pair with audio, mux.
+    """Background thread: pre-fetch video segments into a continuous
+    per-epoch buffer, and cut+mux fixed-duration output windows from it as
+    soon as each window is fully buffered.
 
     Polls the video variant playlist, fetches each new segment (decrypting
-    as needed), waits up to 8 s for the matching audio entry from the audio
-    queue (safe because we're off the HTTP handler critical path), muxes with
-    ffmpeg, and stores the result in state._ready_segs[seq].  _handle_segment
-    then serves from that cache with no blocking wait.
+    as needed), appends its bytes to state._video_buf (flushing any partial
+    window and opening a fresh buffer at every real CDN discontinuity), and
+    drains _cut_and_mux_next_window in a loop after each append - which
+    slices whatever audio buffer covers the same PTS range (see
+    _slice_audio_for_window) and stores the muxed result in
+    state._ready_segs, keyed by an internal chunk_seq rather than the CDN's
+    own media-sequence number. _handle_segment then serves from that cache
+    with no blocking wait in the steady-state case.
 
     Combined with _handle_playlist's own readiness check (withholding a
-    segment from the served playlist until this loop has actually muxed
-    it) the muxed segment is normally ready well before Enigma2 is allowed
-    to request it, eliminating audio dropouts caused by ordinary CDN audio
-    lag. At a real content transition
-    where the matching audio's own disc tag is late, _resolve_late_audio's
-    extended retry (see _LATE_AUDIO_WAIT_FACTOR) and handle_segment's own
-    deadline are what give that case a real chance to land in time too.
+    chunk_seq from the served playlist until this loop has actually
+    produced it), the muxed window is normally ready well before Enigma2 is
+    allowed to request it. At a real content transition where the matching
+    audio hasn't been buffered yet, _resolve_late_audio_window's extended
+    retry and _handle_segment's own deadline are what give that case a real
+    chance to land in time too.
 
     variant_idx is re-resolved against state.variant_urls on every poll so
     that CDN URL rotations (signed-URL token refresh) are picked up without
@@ -1126,29 +1323,11 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
     """
     fetched_seqs: set = set()
     bumped_disc_seqs: set = set()
-    last_v_pts: 'int | None' = None
-    last_adata: 'bytes | None' = None
-    last_a_seq: 'int | None' = None
     video_epoch = state.current_video_epoch()
-    epoch_known_empty: 'int | None' = None
-    poll_gen = 0
-    pending_resync: 'tuple[int, int] | None' = None
-
-    def _resync_up_if_confirmed(seq: int, audio_epoch_now: int) -> bool:
-        nonlocal video_epoch, pending_resync
-        if (pending_resync is not None and pending_resync[0] == audio_epoch_now  # pylint: disable=unsubscriptable-object
-                and pending_resync[1] != poll_gen):  # pylint: disable=unsubscriptable-object
-            logger.debug('%s/%s: Event: audio_epoch ahead of video_epoch,'
-                         ' confirmed over a later poll (missed video-side disc marker)'
-                         ' | Action: resync video_epoch %s -> %s',
-                         channel_id, seq, video_epoch, audio_epoch_now)
-            video_epoch = audio_epoch_now
-            state.set_video_epoch(video_epoch)
-            pending_resync = None
-            return True
-        if pending_resync is None or pending_resync[0] != audio_epoch_now:  # pylint: disable=unsubscriptable-object
-            pending_resync = (audio_epoch_now, poll_gen)
-        return False
+    with state._lock:
+        state._video_buf = _RenditionBuffer(video_epoch, is_disc_epoch=True)
+        state._video_cursor_pts = None
+        state._cc_resync_pending = True
 
     while True:
         if state._video_prefetch_stop.is_set():
@@ -1193,7 +1372,6 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
         while len(all_discs) < len(vsegs):
             all_discs.append(False)
 
-        poll_gen += 1
         new_seqs = 0
         for i, url in enumerate(vsegs):
             seq = vseq + i
@@ -1207,14 +1385,12 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
             if state._video_prefetch_stop.is_set():
                 break
 
-            state.invalidate_segment(seq)
-
             pace_wait_start = None
             while seq > state.last_requested_seq() + _PREFETCH_LEAD_SEGMENTS:
                 if pace_wait_start is None:
                     pace_wait_start = time.monotonic()
                     logger.debug('%s/%s: pacing - last requested seq is %s,'
-                                 ' waiting for it to reach %s before muxing further ahead',
+                                 ' waiting for it to reach %s before fetching further ahead',
                                  channel_id, seq, state.last_requested_seq(),
                                  seq - _PREFETCH_LEAD_SEGMENTS)
                 if state._video_prefetch_stop.wait(timeout=0.5):
@@ -1228,19 +1404,19 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
                 break
 
             is_disc = all_discs[i]
-            pending_disc_ahead = any(all_discs[i + 1:i + 1 + _DISC_LOOKAHEAD_SEGMENTS])
             if is_disc and seq not in bumped_disc_seqs:
                 bumped_disc_seqs.add(seq)
-                last_v_pts = None
-                last_adata = None
-                last_a_seq = None
-                epoch_known_empty = None
                 video_epoch += 1
                 state.set_video_epoch(video_epoch)
-                pending_resync = None
                 logger.debug('%s/%s: Event: CDN discontinuity tag | Action:'
-                             ' reset PTS state, video_epoch -> %s (audio_epoch=%s)',
+                             ' flush partial window, video_epoch -> %s (audio_epoch=%s)',
                              channel_id, seq, video_epoch, state.current_audio_epoch())
+                while _cut_and_mux_next_window(channel_id, state):
+                    pass
+                video_epoch = state.current_video_epoch()
+                state._video_buf.mark_closed()
+                state._video_buf = _RenditionBuffer(video_epoch, is_disc_epoch=True)
+                state._video_cursor_pts = None
 
             vdata = _fetch(url, binary=True, timeout=state.seg_duration * 0.8,
                            tag='video-prefetch:segment')
@@ -1257,105 +1433,49 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
             if not vdata or vdata[0] != 0x47:
                 continue
 
-            v_pts = _first_pts(vdata)
-            logger.debug('%s/%s: vpf v_pts=%s', channel_id, seq, v_pts)
+            pts_offsets, pat_pmt = _scan_ts_index(vdata)
+            if not pts_offsets:
+                logger.debug('%s/%s: Event: no PTS found in video segment'
+                             ' | Action: mux standalone (approx PTS), skip buffer',
+                             channel_id, seq)
+                approx_start = state._video_cursor_pts
+                if approx_start is None and state._video_buf.pts_list:
+                    approx_start = state._video_buf.pts_list[-1]
+                if approx_start is None:
+                    approx_start = 0
+                approx_end = approx_start + int(state.seg_duration * 90000)
+                muxed = _ffmpeg_mux(vdata, None, state, is_disc=False, track_cc=True,
+                                    v_pts=approx_start)
+                with state._lock:
+                    chunk_seq = state._next_chunk_seq
+                    state._next_chunk_seq += 1
+                    state._ready_segs[chunk_seq] = muxed
+                    state._window_meta[chunk_seq] = _WindowMeta(
+                        video_epoch, approx_start, approx_end, False)
+                    while len(state._ready_segs) > _MAX_SEG_CACHE:
+                        k, _ = state._ready_segs.popitem(last=False)
+                        state._window_meta.pop(k, None)
+                fetched_seqs.add(seq)
+                continue
+            v_pts = pts_offsets[0][1]
 
-            adata = None
-            a_seq = None
-            _reused = False
-            _upgrade_pending = False
-            _late_audio_allow_stale = False
-            if v_pts is not None:
-                if v_pts == last_v_pts and last_adata is not None:
-                    adata = last_adata
-                    a_seq = last_a_seq
-                    _reused = True
-                    state.mark_duplicate(seq)
-                elif is_disc:
-                    audio_pair = state.pop_audio_for_pts(
-                        v_pts, video_epoch, wait_secs=0,
-                        channel_id=channel_id, video_seq=seq,
-                        allow_stale_epoch=False)
-                    if audio_pair is None:
-                        audio_epoch_now = state.current_audio_epoch()
-                        if (audio_epoch_now > video_epoch and not pending_disc_ahead
-                                and _resync_up_if_confirmed(seq, audio_epoch_now)):
-                            audio_pair = state.pop_audio_for_pts(
-                                v_pts, video_epoch, wait_secs=0,
-                                channel_id=channel_id, video_seq=seq,
-                                allow_stale_epoch=False)
-                    if audio_pair is not None:
-                        _a_pts, a_seq, adata = audio_pair
-                    else:
-                        _upgrade_pending = True
-                else:
-                    ring_epoch_max_pre = state.ring_max_epoch()
-                    short_wait = (epoch_known_empty == video_epoch
-                                  or (ring_epoch_max_pre is not None
-                                      and ring_epoch_max_pre < video_epoch))
-                    audio_pair = state.pop_audio_for_pts(
-                        v_pts, video_epoch,
-                        wait_secs=(0 if short_wait else None),
-                        channel_id=channel_id, video_seq=seq)
-                    if audio_pair is not None:
-                        _a_pts, a_seq, adata = audio_pair
-                        epoch_known_empty = None
-                    else:
-                        epoch_known_empty = video_epoch
-                        _upgrade_pending = True
-                        _late_audio_allow_stale = short_wait
-                        audio_epoch_now = state.current_audio_epoch()
-                        if audio_epoch_now > video_epoch and not pending_disc_ahead:
-                            _resync_up_if_confirmed(seq, audio_epoch_now)
-                        elif audio_epoch_now <= video_epoch - _MAX_AUDIO_EPOCH_LAG:
-                            logger.debug('%s/%s: Event: audio_epoch persistently'
-                                         ' behind video_epoch by >= %s (missed audio-side disc'
-                                         ' marker) | Action: resync video_epoch %s -> %s',
-                                         channel_id, seq, _MAX_AUDIO_EPOCH_LAG,
-                                         video_epoch, audio_epoch_now)
-                            video_epoch = audio_epoch_now
-                            state.set_video_epoch(video_epoch)
-            last_v_pts = v_pts
-            last_adata = adata
-            last_a_seq = a_seq
+            vbuf = state._video_buf
+            if vbuf.pts_list and v_pts == vbuf.pts_list[-1]:
+                logger.debug('%s/%s: Event: duplicate video PTS (CDN frame-repeat'
+                             ' at splice) v_pts=%s | Action: drop, not appended to buffer',
+                             channel_id, seq, v_pts)
+                fetched_seqs.add(seq)
+                continue
 
-            reset_cc = is_disc
-            with state._lock:
-                if state._cc_resync_pending:
-                    reset_cc = True
-                    state._cc_resync_pending = False
-            muxed = _ffmpeg_mux(vdata, adata, state, is_disc=is_disc, track_cc=True,
-                                reset_cc=reset_cc)
-            if _reused:
-                _event = f'duplicate video PTS v_pts={v_pts}'
-                _action = f'reuse previous audio (aseq={a_seq})'
-            elif adata:
-                _event = ('disc boundary, epoch-matched audio available' if is_disc
-                          else f'audio matched (v_pts={v_pts})')
-                _action = f'pair audio aseq={a_seq}'
-            else:
-                _event = ('disc boundary, no same-epoch audio yet (zero-wait peek)' if is_disc
-                          else f'no audio matched (v_pts={v_pts})')
-                _action = 'pair with silence, retry via late-audio resolver'
-            logger.debug('%s/%s: Event: %s | Action: %s (%s bytes)',
-                         channel_id, seq, _event, _action, len(muxed))
+            vbuf.append(vdata, pts_offsets, pat_pmt)
+            if state._video_cursor_pts is None:
+                state._video_cursor_pts = v_pts
 
-            with state._lock:
-                state._ready_segs[seq] = muxed
-                while len(state._ready_segs) > _MAX_SEG_CACHE:
-                    state._ready_segs.popitem(last=False)
             fetched_seqs.add(seq)
             new_seqs += 1
 
-            if _upgrade_pending:
-                state.mark_provisional(seq)
-                threading.Thread(
-                    target=_resolve_late_audio,
-                    args=(channel_id, state, seq, vdata, v_pts, video_epoch,
-                          _late_audio_allow_stale),
-                    daemon=True,
-                    name=f'PlutoLateAudio-{channel_id[:8]}-{seq}',
-                ).start()
+            _cut_and_mux_next_window(channel_id, state)
+            video_epoch = state.current_video_epoch()
 
         if state._video_prefetch_stop.is_set():
             break
@@ -1445,11 +1565,15 @@ def register_channel(channel_id: str, real_master_url: str, url_refresher=None) 
             existing.master_url = real_master_url
             if url_refresher is not None:
                 existing.url_refresher = url_refresher
-            if new_sid is not None and new_sid != old_sid:
+            was_closed = existing._audio_prefetch_stop.is_set()
+            if was_closed or (new_sid is not None and new_sid != old_sid):
                 with existing._lock:
                     existing._ready_segs.clear()
+                    existing._window_meta.clear()
                     existing._provisional_segs.clear()
-            was_closed = existing._audio_prefetch_stop.is_set()
+                    existing._audio_bufs.clear()
+                    existing._audio_appended_seqs.clear()
+                    existing._audio_disc_seqs_seen.clear()
             existing._audio_prefetch_stop.clear()
             existing._video_prefetch_stop.clear()
             if was_closed:
@@ -1544,9 +1668,6 @@ def _has_empty_jwt(url: str) -> bool:
 
 _AUTO_MASTER_RETRIES = 2
 _AUTO_MASTER_RETRY_DELAY = 1.0
-
-_SEGMENT_FETCH_RETRIES = 1
-_SEGMENT_FETCH_RETRY_DELAY = 0.3
 
 
 class HLSProxyHandler(BaseHTTPRequestHandler):
@@ -1724,16 +1845,6 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
                          channel_id, vseq)
             self._send(502, b'Video playlist unavailable', 'text/plain')
             return
-        all_key_urls, all_ivs, _ = HLSPlaylist.segment_keys(vtext, vbase)
-
-        _fill_key = all_key_urls[-1] if all_key_urls else None
-        _fill_iv = all_ivs[-1] if all_ivs else None
-        while len(all_key_urls) < len(vsegs):
-            all_key_urls.append(_fill_key)
-            all_ivs.append(_fill_iv)
-
-        state.add_segments(vseq, vsegs, all_key_urls, all_ivs)
-
         _d = HLSPlaylist.extinf_duration(vtext)
         if _d is not None and _d != state.seg_duration:
             logger.debug('%s: seg_duration %.2fs -> %.2fs', channel_id, state.seg_duration, _d)
@@ -1755,7 +1866,7 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
                 aiv_pre = aiv_pre[:_AUDIO_PREPOPULATE_CAP]
                 adisc_pre = adisc_pre[:_AUDIO_PREPOPULATE_CAP]
 
-                def _pre_fetch_one(seq, url, key_url, iv_explicit, epoch):
+                def _pre_fetch_one(seq, url, key_url, iv_explicit):
                     adata = _fetch(url, binary=True, timeout=state.seg_duration * 0.8,
                                    tag='handler:playlist-prepopulate-segment')
                     if not adata:
@@ -1767,63 +1878,64 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
                                                    AES128.iv(iv_explicit, seq))
                     if not adata or adata[0] != 0x47:
                         return
-                    pts = _first_pts(adata)
-                    if pts is not None:
-                        logger.debug('%s pre-pop audio seq=%s a_pts=%s epoch=%s',
-                                     channel_id, seq, pts, epoch)
-                        pre_results.append((pts, epoch, seq, adata))
+                    pre_results[seq] = adata
 
-                pre_results = []
+                pre_results: dict = {}
                 workers = min(_AUDIO_FETCH_WORKERS, max(1, len(asegs_pre)))
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     for i, url in enumerate(asegs_pre):
                         k = akey_pre[i] if i < len(akey_pre) else None
                         iv = aiv_pre[i] if i < len(aiv_pre) else None
-                        disc = adisc_pre[i] if i < len(adisc_pre) else False
-                        epoch = state.assign_audio_epoch(aseq_pre + i, disc)
-                        pool.submit(_pre_fetch_one, aseq_pre + i, url, k, iv, epoch)
-                for pts, epoch, seq, adata in sorted(pre_results, key=lambda x: (x[1], x[0])):
-                    state.add_audio(pts, epoch, seq, adata)
-                logger.debug('%s: pre-populated audio queue with %s entries',
-                             channel_id, len(state._audio_queue))
+                        pool.submit(_pre_fetch_one, aseq_pre + i, url, k, iv)
+                for i in range(len(asegs_pre)):
+                    seq = aseq_pre + i
+                    adata = pre_results.get(seq)
+                    if adata is None:
+                        continue
+                    disc = adisc_pre[i] if i < len(adisc_pre) else False
+                    _append_audio(state, channel_id, seq, disc, adata)
+                logger.debug('%s: pre-populated audio buffer with %s segment(s)',
+                             channel_id, len(pre_results))
 
         state.start_video_prefetch_if_needed(channel_id, idx)
 
-        cold_start = not state.has_ready_segs()
-        if cold_start:
+        if not state.has_ready_segs():
             cold_deadline = time.monotonic() + _COLD_START_FIRST_SEGMENT_WAIT
-            while not state.is_ready(vseq) and time.monotonic() < cold_deadline:
+            while not state.has_ready_segs() and time.monotonic() < cold_deadline:
                 time.sleep(0.05)
 
         out = []
-        seg_idx = 0
-        skip_current = False
         for line in vtext.splitlines():
             stripped = line.strip()
-            if stripped.startswith('#EXT-X-KEY:'):
-                pass
-            elif stripped == '#EXT-X-DISCONTINUITY':
-                pass
-            elif stripped.startswith('#EXT-X-MEDIA-SEQUENCE:'):
-                out.append(f'#EXT-X-MEDIA-SEQUENCE:{vseq}')
-            elif stripped.startswith('#EXTINF:'):
-                seq_i = vseq + seg_idx
-                skip_current = state.is_duplicate(seq_i)
-                if not skip_current and not cold_start and not state.is_ready(seq_i):
-                    skip_current = True
-                if not skip_current:
-                    out.append('#EXT-X-DISCONTINUITY')
-                    out.append(line)
-            elif stripped and not stripped.startswith('#'):
-                if not skip_current:
-                    out.append(
-                        f'http://{PROXY_HOST}:{PROXY_PORT}'
-                        f'/seg/{channel_id}/{vseq + seg_idx}.ts'
-                    )
-                seg_idx += 1
-                skip_current = False
-            else:
-                out.append(line)
+            if (stripped.startswith('#EXT-X-KEY:')
+                    or stripped == '#EXT-X-DISCONTINUITY'
+                    or stripped.startswith('#EXT-X-MEDIA-SEQUENCE:')
+                    or stripped.startswith('#EXTINF:')
+                    or (stripped and not stripped.startswith('#'))):
+                continue
+            out.append(line)
+
+        window_size = max(1, len(vsegs))
+        with state._lock:
+            advertise_seqs = list(state._ready_segs.keys())[-window_size:]
+            window_meta = dict(state._window_meta)
+
+        media_seq = advertise_seqs[0] if advertise_seqs else state._next_chunk_seq
+        insert_at = 1 if out and out[0].strip() == '#EXTM3U' else 0
+        out.insert(insert_at, f'#EXT-X-MEDIA-SEQUENCE:{media_seq}')
+
+        for cseq in advertise_seqs:
+            meta = window_meta.get(cseq)
+            if meta is None:
+                continue
+            duration = max(0.0, (meta.end_pts - meta.start_pts) / 90000.0)
+            if meta.is_disc:
+                out.append('#EXT-X-DISCONTINUITY')
+            out.append(f'#EXTINF:{duration:.3f},')
+            out.append(
+                f'http://{PROXY_HOST}:{PROXY_PORT}'
+                f'/seg/{channel_id}/{cseq}.ts'
+            )
 
         out_bytes = '\n'.join(out).encode()
         state._last_playlist_out[idx] = (out_bytes, time.monotonic())
@@ -1861,52 +1973,24 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
             self._send(200, provisional_fallback, 'video/MP2T')
             return
 
-        logger.debug('%s/%s: prefetch miss, on-demand fallback', channel_id, seq)
-        pair = state.get_segment(seq)
-        if not pair:
-            if self._serveLastSegment(state, channel_id, seq, 'no cached segment info'):
+        logger.debug('%s/%s: Event: chunk never produced by prefetch loop'
+                     ' | Action: wait a little longer, then re-serve last chunk', channel_id, seq)
+        extra_deadline = time.monotonic() + state.seg_duration
+        while time.monotonic() < extra_deadline:
+            with state._lock:
+                muxed = state._ready_segs.get(seq)
+                provisional = seq in state._provisional_segs
+            if muxed is not None and not provisional:
+                logger.debug('%s/%s: cache hit %s bytes (after extended wait)',
+                             channel_id, seq, len(muxed))
+                state._last_segment_out = (seq, muxed)
+                self._send(200, muxed, 'video/MP2T')
                 return
-            self._send(404, b'Segment not in cache', 'text/plain')
+            time.sleep(0.05)
+
+        if self._serveLastSegment(state, channel_id, seq, 'chunk never produced'):
             return
-
-        video_url, key_url, iv_explicit = pair
-        vdata = _fetch(video_url, binary=True, timeout=state.seg_duration * 0.8,
-                       tag='handler:segment-fallback')
-        for attempt in range(_SEGMENT_FETCH_RETRIES):
-            if vdata:
-                break
-            time.sleep(_SEGMENT_FETCH_RETRY_DELAY)
-            vdata = _fetch(video_url, binary=True, timeout=state.seg_duration * 0.8,
-                           tag=f'handler:segment-fallback-retry{attempt + 1}')
-        if not vdata:
-            if self._serveLastSegment(state, channel_id, seq, 'on-demand fetch failed'):
-                return
-            self._send(502, b'Video segment unavailable', 'text/plain')
-            return
-
-        if key_url:
-            key_bytes = AES128.fetch_key(key_url, _fetch)
-            if key_bytes:
-                vdata = AES128.decrypt(vdata, key_bytes,
-                                       AES128.iv(iv_explicit, seq))
-
-        adata = None
-        a_seq = None
-        if state.audio_url:
-            v_pts = _first_pts(vdata)
-            if v_pts is not None:
-                audio_pair = state.pop_audio_for_pts(
-                    v_pts, state.current_audio_epoch(), wait_secs=0,
-                    channel_id=channel_id, video_seq=seq,
-                    allow_stale_epoch=False)
-                if audio_pair is not None:
-                    _a_pts, a_seq, adata = audio_pair
-
-        merged = _ffmpeg_mux(vdata, adata, state, is_disc=True, track_cc=False)
-        logger.debug('%s/%s: fallback %s bytes aseq=%s',
-                     channel_id, seq, len(merged), a_seq)
-        state._last_segment_out = (seq, merged)
-        self._send(200, merged, 'video/MP2T')
+        self._send(404, b'Segment not in cache', 'text/plain')
 
     def _serveLastSegment(self, state, channel_id, seq, reason):
         """Re-serve the last segment actually sent to Enigma2, in place of a
@@ -1915,10 +1999,24 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
         than risking hlsdemux wedging on a hard error with no recourse but a
         manual re-zap. Returns True if it served something (caller should
         return without sending its own error response).
+
+        Unlike the old per-CDN-segment design, there's no way to
+        reconstruct a genuinely never-produced chunk_seq on demand here:
+        chunk_seq is minted only at production time (see
+        state._next_chunk_seq), so one that was never produced was never
+        associated with any CDN URL to re-fetch from in the first place -
+        not merely evicted from a cache, but never assigned a source at
+        all. _handle_playlist only ever advertises chunk_seqs already
+        present in state._ready_segs, so reaching this fallback with
+        nothing to serve should be rare to the point of near-unreachability
+        in practice; it exists purely as a last-resort backstop.
         """
         last = state._last_segment_out
         if last is None:
-            return False
+            with state._lock:
+                last = next(reversed(state._ready_segs.items()), None)
+            if last is None:
+                return False
         last_seq, last_bytes = last
         logger.debug('%s/%s: Event: %s | Action: re-serving last segment (%s) instead of erroring',
                      channel_id, seq, reason, last_seq)

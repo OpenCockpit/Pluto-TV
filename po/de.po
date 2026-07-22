@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 16:18+0200\n"
-"PO-Revision-Date: 2026-07-16 16:18+0200\n"
+"POT-Creation-Date: 2026-07-20 15:17+0200\n"
+"PO-Revision-Date: 2026-07-20 15:34+0200\n"
 "Last-Translator: xcentaurix\n"
 "Language-Team: xcentaurix\n"
 "Language: de\n"
@@ -20,6 +20,138 @@ msgstr ""
 "X-Generator: Poedit 3.5\n"
 "X-Poedit-Basepath: ../src\n"
 "X-Poedit-SearchPath-0: .\n"
+
+msgid "Remove picons"
+msgstr "Entferne Picons"
+
+msgid "PlutoTV Setup Actions"
+msgstr "PlutoTV-Konfiguration"
+
+msgid "Remove Live-TV Bouquet"
+msgstr "Entferne Live-TV-Bouquet"
+
+msgid "PlutoTV Setup"
+msgstr "PlutoTV-Konfiguration"
+
+msgid "VoD country"
+msgstr "VoD-Land"
+
+msgid "Select the country that the VoD list will be created for."
+msgstr "Auswahl des Landes, für das die VoD-Liste erstellt wird."
+
+msgid "Live-TV bouquet %s"
+msgstr "Live-TV-Bouquet %s"
+
+msgid "Country for which Live-TV bouquet %s will be created."
+msgstr "Für welches Land soll das Live-TV-Bouquet '%s' erstellt werden?"
+
+msgid "Live TV mode"
+msgstr "Live-TV-Modus"
+
+msgid "Select the stream provider. Stitcher uses the native Pluto server with JWT auth (resolved at playback). JMP2 uses the jmp2.uk proxy. i.mjh.nz uses Matt Huisman's community playlist. Requires bouquet update to take effect."
+msgstr "Wähle Stream-Provider aus."
+
+msgid "Picon type"
+msgstr "Picon-Typ"
+
+msgid "Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references."
+msgstr "Picons mit Servicenamen funktionieren auch, wenn sich die Service-Referenz ändert. Sie können auch von Kanälen mit unterschiedlichen Service-Referenzen geteilt werden."
+
+msgid "Data location"
+msgstr "Daten-Verzeichnis"
+
+msgid "Location the config data are stored in."
+msgstr "Verzeichnis der Konfigurationsdaten"
+
+msgid "Loading data... Please wait"
+msgstr "Lade Daten - bitte warten..."
+
+msgid "Exit"
+msgstr "Beenden"
+
+msgid "TMDb Search"
+msgstr "TMDb Suche"
+
+msgid "IMDb Search"
+msgstr "IMDb Suche"
+
+msgid "MENU"
+msgstr "Menü"
+
+msgid "Change country"
+msgstr "Wähle VoD-Land"
+
+msgid "Go forward one level including starting playback"
+msgstr "Gehe eine Ebene forwärts mit Playback-Start"
+
+msgid "Go back one level including exiting"
+msgstr "Gehe eine Ebene zurück mit Exit"
+
+msgid "Create or update PlutoTV live bouquets"
+msgstr "Erstelle oder update PlutoTV Live-TV-Bouquets"
+
+msgid "Go back one level"
+msgstr "Gehe eine Ebene zurück"
+
+msgid "Open the plugin configuration screen"
+msgstr "Öffne die Plugin Konfiguration"
+
+msgid "Search for information in %s"
+msgstr "Suche nach Informationen in %s"
+
+msgid "The Movie Database"
+msgstr "The Movie Database (TMDB)"
+
+msgid "the Internet Movie Database"
+msgstr "Internet Movie Database"
+
+msgid "Load the VoD list of another country"
+msgstr "Lade VoD-Liste eines anderen Landes"
+
+msgid "Scroll the information field"
+msgstr "Scrolle das Informationsfeld"
+
+msgid "VOD Menu"
+msgstr "VoD-Menü"
+
+msgid "PlutoTV"
+msgstr "PlutoTV"
+
+msgid "There is no data, it is possible that Pluto TV is not available in your country"
+msgstr "Keine Daten verfügbar - es ist möglich, dass PlutoTV nicht verfügbar ist."
+
+msgid "Episode"
+msgstr "Episode"
+
+msgid "Season"
+msgstr "Staffel"
+
+msgid "Seasons"
+msgstr "Staffeln"
+
+msgid ""
+"The Pluto TV bouquets in your channel list have been updated.\n"
+"\n"
+"They will now be rebuilt automatically every 5 hours."
+msgstr ""
+"Die PlutoTV-Bouquets in der Kanalliste wurden aktualisiert.\n"
+"\n"
+"Sie werden jetzt alle 5 Stunden neu erstellt."
+
+msgid "Update Live-TV Bouquet"
+msgstr "Live-TV-Bouquet aktualisieren"
+
+msgid "Live-TV Bouquet last updated:"
+msgstr "Letzter Live-TV-Bouquet Update:"
+
+msgid "Live-TV Bouquet needs updating. Press GREEN."
+msgstr "Live-TV-Bouquet benötigt Update."
+
+msgid "Create Live-TV Bouquet"
+msgstr "Erstelle Live-TV-Bouquet"
+
+msgid "Temporarily switch the VoD list to another country"
+msgstr "Wechsle vorübergehend zur VoD-Liste eines anderen Landes"
 
 msgid "Local"
 msgstr "Lokal"
@@ -51,14 +183,14 @@ msgstr "Picons"
 msgid "Fetching picons..."
 msgstr "Picons werden heruntergeladen..."
 
-msgid "LiveTV update completed"
-msgstr "Update des LiveTV-Bouquets ist beendet."
+msgid "Live-TV update completed"
+msgstr "Update des Live-TV-Bouquets ist beendet."
 
 msgid "Processing data..."
 msgstr "Verarbeite Daten..."
 
 msgid "Waiting for Channel: "
-msgstr "Warte auf Kanal: "
+msgstr "Kanal: "
 
 msgid "The download is in progress. Exit now?"
 msgstr "Es ist ein Download aktiv. Jetzt verlassen?"
@@ -72,155 +204,11 @@ msgstr "Bitte warten..."
 msgid "Updating: Pluto TV %s"
 msgstr "Update: PlutoTV %s"
 
-msgid "There is no data, it is possible that Pluto TV is not available in your country"
-msgstr "Keine Daten verfügbar - es ist möglich, dass PlutoTV nicht verfügbar ist."
-
-msgid "Do you want to resume this playback?"
-msgstr "Soll das Playback fortgesetzt werden?"
-
-msgid "Resume position at %s"
-msgstr "Fortsetzen an Position %s"
-
-msgid "Remove picons"
-msgstr "Entferne Picons"
-
-msgid "PlutoTV Setup Actions"
-msgstr "PlutoTV-Konfiguration"
-
-msgid "Remove LiveTV Bouquet"
-msgstr "Entferne LiveTV-Bouquet"
-
-msgid "PlutoTV Setup"
-msgstr "PlutoTV-Konfiguration"
-
-msgid "VoD country"
-msgstr "VoD-Land"
-
-msgid "Select the country that the VoD list will be created for."
-msgstr "Auswahl des Landes, für das die VoD-Liste erstellt wird."
-
-msgid "LiveTV bouquet %s"
-msgstr "LiveTV-Bouquet %s"
-
-msgid "Country for which LiveTV bouquet %s will be created."
-msgstr "Für welches Land soll das LiveTV-Bouquet '%s' erstellt werden?"
-
-msgid "Live TV mode"
-msgstr "LiveTV-Modus"
-
-msgid "Select the stream provider. Stitcher uses the native Pluto server with JWT auth (resolved at playback). JMP2 uses the jmp2.uk proxy. i.mjh.nz uses Matt Huisman's community playlist. Requires bouquet update to take effect."
-msgstr "Wähle Stream-Provider aus."
-
-msgid "Picon type"
-msgstr "Picon-Typ"
-
-msgid "Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references."
-msgstr "Picons mit Servicenamen funktionieren auch, wenn sich die Service-Referenz ändert. Sie können auch von Kanälen mit unterschiedlichen Service-Referenzen geteilt werden."
-
-msgid "Data location"
-msgstr "Daten-Verzeichnis"
-
-msgid "Used for storing video cover graphics, etc. A hard drive that goes into standby mode or a slow network mount are not good choices."
-msgstr "Wird für die Speicherung von Video Cover Grafiken etc. verwendet. Eine Festplatte, die in Standby geht, oder eine langsame Netzwerkplatte sind keine gute Wahl."
-
-msgid "Config folder"
-msgstr "Konfigurationsordner"
-
-msgid "Folder the config data are stored in."
-msgstr "Ordner der Konfigurationsdaten"
-
-msgid "Loading data... Please wait"
-msgstr "Lade Daten - bitte warten. "
-
-msgid "Exit"
-msgstr "Beenden"
-
-msgid "TMDb Search"
-msgstr "TMDb Suche"
-
-msgid "IMDb Search"
-msgstr "IMDb Suche"
-
-msgid "MENU"
-msgstr "Menü"
-
-msgid "Change country"
-msgstr "Wähle VoD-Land"
-
-msgid "Go forward one level including starting playback"
-msgstr "Gehe eine Ebene forwärts mit Playback-Start"
-
-msgid "Go back one level including exiting"
-msgstr "Gehe eine Ebene zurück mit Exit"
-
-msgid "Create or update PlutoTV live bouquets"
-msgstr "Erstelle oder update PlutoTV LiveTV-Bouquets"
-
-msgid "Go back one level"
-msgstr "Gehe eine Ebene zurück"
-
-msgid "Open the plugin configuration screen"
-msgstr "Öffne die Plugin Konfiguration"
-
-msgid "Search for information in %s"
-msgstr "Suche nach Informationen in %s"
-
-msgid "The Movie Database"
-msgstr "The Movie Database (TMDB)"
-
-msgid "the Internet Movie Database"
-msgstr "Internet Movie Database"
-
-msgid "Load the VoD list of another country"
-msgstr "Lade VoD-Liste eines anderen Landes"
-
-msgid "Scroll the information field"
-msgstr "Scrolle das Informationsfeld"
-
-msgid "VOD Menu"
-msgstr "VoD-Menü"
-
-msgid "PlutoTV"
-msgstr "PlutoTV"
-
-msgid "Episode"
-msgstr "Episode"
-
-msgid "Season"
-msgstr "Staffel"
-
-msgid "Seasons"
-msgstr "Staffeln"
-
-msgid ""
-"The Pluto TV bouquets in your channel list have been updated.\n"
-"\n"
-"They will now be rebuilt automatically every 5 hours."
-msgstr ""
-"Die PlutoTV-Bouquets in der Kanalliste wurden aktualisiert.\n"
-"\n"
-"Sie werden jetzt alle 5 Stunden neu erstellt."
-
-msgid "Update LiveTV Bouquet"
-msgstr "LiveTV-Bouquet aktualisieren"
-
-msgid "LiveTV Bouquet last updated:"
-msgstr "Letzter LiveTV-Bouquet Update:"
-
-msgid "LiveTV Bouquet needs updating. Press GREEN."
-msgstr "LiveTV-Bouquet benötigt Update. Drücke 'Grün'."
-
-msgid "Create LiveTV Bouquet"
-msgstr "Erstelle LiveTV-Bouquet"
-
-msgid "Temporarily switch the VoD list to another country"
-msgstr "Wechsle vorübergehend zur VoD-Liste eines anderen Landes"
-
 msgid "PlutoTVCockpit"
 msgstr "PlutoTV"
 
 msgid "View video on demand and download a bouquet of live tv channels"
-msgstr "VoD und LiveTV-Bouquet Download"
+msgstr "VoD Playback und Live-TV-Bouquet Download"
 
 msgid "Download PlutoTV bouquets, picons and EPG"
 msgstr "PlutoTV Bouquet, Picons und EPG Download"

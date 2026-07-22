@@ -1,6 +1,6 @@
 Package: enigma2-plugin-extensions-plutotvcockpit
-Version: 0.16.6
+Version: 0.17.3
 Plugin: PlutoTVCockpit
 Description: PlutoTVCockpit plugin for enigma2
 Architecture: all
-Depends: python3-pycryptodome
+Depends: python3-pycryptodome, enigma2-plugin-extensions-epgimport

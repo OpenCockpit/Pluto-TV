@@ -75,7 +75,7 @@ TSIDS = {cc: f"{i:X}" for i, cc in enumerate(COUNTRY_NAMES, 1)}
 config.plugins.plutotv = ConfigSubsection()
 config.plugins.plutotv.country = ConfigSelection(default="local", choices=[("local", _("Local"))] + list(COUNTRY_NAMES.items()))
 config.plugins.plutotv.picons = ConfigSelection(default="snp", choices=[("snp", _("service name")), ("srp", _("service reference")), ("", _("None"))])
-config.plugins.plutotv.live_tv_mode = ConfigSelection(default="stitcher", choices=[("stitcher", _("Stitcher")), ("jmp2", _("JMP2 proxy")), ("mjh", _("i.mjh.nz"))])
+config.plugins.plutotv.live_tv_mode = ConfigSelection(default="jmp2", choices=[("stitcher", _("Stitcher")), ("jmp2", _("JMP2 proxy")), ("mjh", _("i.mjh.nz"))])
 config.plugins.plutotv.config_folder = ConfigDirectory(default="/etc/enigma2")
 
 

@@ -4,9 +4,21 @@
 #
 #   AnalyzeProxyLog - dev-only command-line tool that parses LiveProxy's
 #   own logger.debug() lines out of an Enigma2 log file and reports whether
-#   the video/audio epoch-sync and late-audio-recovery mechanism in
-#   LiveProxy.py is behaving: epoch resyncs, silence-muxed segments that
-#   never got a late-audio upgrade, and any error-like lines.
+#   the continuous-buffer window-cutting and late-audio-recovery mechanism
+#   in LiveProxy.py is behaving: silence-muxed output windows that never
+#   got a late-audio upgrade, and any error-like lines.
+#
+#   Regexes below match the windowed-mux engine (chunk_seq-keyed
+#   _cut_and_mux_next_window/_slice_audio_for_window/
+#   _resolve_late_audio_window, see LiveProxy.py) - they will not match
+#   logs from the older per-CDN-segment pop_audio_for_pts engine. Two
+#   metrics that mechanism used to report no longer apply and are expected
+#   to always read 0 against a new-engine log: "Epoch resyncs" (the
+#   video/audio epoch-counter resync dance was eliminated - see
+#   _slice_audio_for_window's docstring) and "Served via on-demand fallback
+#   path" (the old synchronous CDN-segment reconstruction fallback was
+#   replaced by a narrower extended-wait-then-reserve-last-chunk fallback -
+#   see _handle_segment's comment on that tradeoff).
 #
 #   Not part of the installed plugin (see tools placement note in
 #   src/Makefile.am's install_PYTHON) - run it by hand against a copy of
@@ -15,22 +27,25 @@
 
 import argparse
 import re
-from collections import defaultdict
 
 PREFIX = r"PTV: \w+: LiveProxy\.py: \w+: "
 
-SILENCE_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: .*\| Action: pair with silence.*\((\d+) bytes\)")
-UPGRADE_RE = re.compile(PREFIX + r"(\S+)/(\d+): late-audio upgrade applied \(aseq=(\d+)\)")
-SLIVER_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: no audio ever found for this segment"
-                       r" \(confirmed sliver")
-DISC_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: CDN discontinuity tag \| Action: reset PTS state, video_epoch -> (\d+) \(audio_epoch=(\d+)\)")
-MISS_RE = re.compile(PREFIX + r"(\S+)/(\d+): audio MISS")
+SILENCE_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: window cut epoch=\d+ pts=\[\d+,\d+\)"
+                        r" is_disc=\S+ audio_covered=False \| Action: mux \((\d+) bytes\)")
+UPGRADE_RE = re.compile(PREFIX + r"(\S+)/(\d+): late-audio window upgrade applied")
+SLIVER_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: no audio ever covered this window")
+DISC_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: CDN discontinuity tag \| Action:"
+                     r" flush partial window, video_epoch -> (\d+) \(audio_epoch=(\d+)\)")
+DUPLICATE_DROPPED_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: duplicate video PTS"
+                                  r" \(CDN frame-repeat at splice\) v_pts=(\d+)")
 RESYNC_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: (.+?) \| Action: resync video_epoch (\d+) -> (\d+)")
 PROVISIONAL_CACHE_HIT_RE = re.compile(PREFIX + r"(\S+)/(\d+): cache hit (\d+) bytes \(provisional, upgrade never landed\)")
 CACHE_HIT_RE = re.compile(PREFIX + r"(\S+)/(\d+): cache hit (\d+) bytes(?! \(provisional)")
 FALLBACK_RE = re.compile(PREFIX + r"(\S+)/(\d+): fallback (\d+) bytes aseq=(\S+)")
-PREFETCH_MISS_RE = re.compile(PREFIX + r"(\S+)/(\d+): prefetch miss")
-STALE_EPOCH_RE = re.compile(PREFIX + r"(\S+)/(\d+): audio match aseq=(\d+) .*\(stale-epoch fallback\)")
+PREFETCH_MISS_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: chunk never produced by prefetch loop")
+STALE_EPOCH_RE = re.compile(PREFIX + r"(\S+)/(\d+): audio window matched epoch=(\d+) .*\(stale-epoch fallback\)")
+STALE_RESERVE_RE = re.compile(PREFIX + r"(\S+)/(\d+): Event: (.+?)"
+                              r" \| Action: re-serving last segment \((\d+)\) instead of erroring")
 MUX_EXCEPTION_RE = re.compile(PREFIX + r"_ffmpeg_mux exception: (.+)")
 MUX_FAIL_RE = re.compile(PREFIX + r"_ffmpeg_mux (\S+) rc=(-?\d+) out=(\d+)b: (.*)")
 TEMPFILE_FAIL_RE = re.compile(PREFIX + r"temp file write failed: (.+)")
@@ -40,16 +55,17 @@ ERROR_RE = re.compile(r"error|Error|Traceback|Exception|exception|failed|Failed"
 
 def analyze(path: str, example_limit: int = 20):
     silence = {}
-    upgraded = {}
+    upgraded = set()
     slivers = set()
     first_serve = {}
     cache_hits = []
     fallback_serves = []
     prefetch_misses = []
     disc_boundaries = []
+    duplicates_dropped = []
     resyncs = []
-    miss_count = defaultdict(int)
     stale_epoch_matches = []
+    stale_reserves = []
     mux_failures = []
     itsoffset_events = []
     errors = []
@@ -72,7 +88,7 @@ def analyze(path: str, example_limit: int = 20):
             m = UPGRADE_RE.search(line)
             if m:
                 track(m.group(1))
-                upgraded[(m.group(1), int(m.group(2)))] = m.group(3)
+                upgraded.add((m.group(1), int(m.group(2))))
                 continue
             m = SLIVER_RE.search(line)
             if m:
@@ -84,15 +100,15 @@ def analyze(path: str, example_limit: int = 20):
                 track(m.group(1))
                 disc_boundaries.append((m.group(1), int(m.group(2)), m.group(3), m.group(4)))
                 continue
+            m = DUPLICATE_DROPPED_RE.search(line)
+            if m:
+                track(m.group(1))
+                duplicates_dropped.append((m.group(1), int(m.group(2)), m.group(3)))
+                continue
             m = RESYNC_RE.search(line)
             if m:
                 track(m.group(1))
                 resyncs.append((m.group(1), int(m.group(2)), m.group(4), m.group(5), m.group(3)))
-                continue
-            m = MISS_RE.search(line)
-            if m:
-                track(m.group(1))
-                miss_count[(m.group(1), int(m.group(2)))] += 1
                 continue
             m = PROVISIONAL_CACHE_HIT_RE.search(line)
             if m:
@@ -123,6 +139,11 @@ def analyze(path: str, example_limit: int = 20):
                 track(m.group(1))
                 stale_epoch_matches.append((m.group(1), int(m.group(2)), m.group(3)))
                 continue
+            m = STALE_RESERVE_RE.search(line)
+            if m:
+                track(m.group(1))
+                stale_reserves.append((m.group(1), int(m.group(2)), m.group(3), int(m.group(4))))
+                continue
             m = MUX_EXCEPTION_RE.search(line) or MUX_FAIL_RE.search(line) or TEMPFILE_FAIL_RE.search(line)
             if m:
                 mux_failures.append(line.strip())
@@ -138,52 +159,60 @@ def analyze(path: str, example_limit: int = 20):
 
     for channel in channel_order:
         ch_silence = {k: v for k, v in silence.items() if k[0] == channel}
-        ch_upgraded = {k: v for k, v in upgraded.items() if k[0] == channel}
+        ch_upgraded = {k for k in upgraded if k[0] == channel}
         ch_never_upgraded = sorted(seq for (_, seq) in ch_silence if (channel, seq) not in ch_upgraded)
         ch_slivers = sorted(seq for (ch, seq) in slivers if ch == channel)
+        ch_duplicates = [d for d in duplicates_dropped if d[0] == channel]
         ch_served_silence = sorted(
             seq for (_, seq), muxed_bytes in ch_silence.items()
             if (fs := first_serve.get((channel, seq))) is not None
             and (fs[1] or fs[0] == muxed_bytes)
         )
-        ch_miss_total = sum(v for k, v in miss_count.items() if k[0] == channel)
         ch_disc = [d for d in disc_boundaries if d[0] == channel]
         ch_resync = [r for r in resyncs if r[0] == channel]
         ch_cache_hits = [c for c in cache_hits if c[0] == channel]
         ch_fallback = [fb for fb in fallback_serves if fb[0] == channel]
         ch_prefetch_miss = [p for p in prefetch_misses if p[0] == channel]
         ch_stale_epoch = [s for s in stale_epoch_matches if s[0] == channel]
+        ch_stale_reserve = [r for r in stale_reserves if r[0] == channel]
+
+        ch_unresolved = sorted(set(ch_never_upgraded) - set(ch_slivers))
 
         print(f"\n=== Channel {channel} ===")
-        print(f"Total silence-muxed segments: {len(ch_silence)}")
-        print(f"Total late-audio-upgrade events: {len(ch_upgraded)}")
-        print(f"Silence segments with NO later upgrade: {len(ch_never_upgraded)}")
+        print(f"Silence-muxed windows this session (no audio covered at cut time,"
+              f" each one spawns exactly one late-audio retry): {len(ch_silence)}")
+        print(f"  Retry succeeded (real audio swapped in before being served): {len(ch_upgraded)}")
+        print(f"  Retry gave up (confirmed: no audio ever covered the window): {len(ch_slivers)}")
+        if ch_unresolved:
+            print(f"  Still unresolved as of end of log: {len(ch_unresolved)}  {ch_unresolved[:example_limit]}")
         print(f"Silence segments actually SERVED as silence ("
-              f" regardless of a later upgrade): {len(ch_served_silence)}")
+              f" regardless of whether a retry later succeeded): {len(ch_served_silence)}")
         for seq in ch_served_silence[:example_limit]:
-            print("  ", seq)
+            print(f"  chunk_seq={seq}")
 
-        ch_missed_seqs = sorted({seq for (ch, seq) in miss_count if ch == channel})
-        ch_missed_recovered = [seq for seq in ch_missed_seqs if (channel, seq) in ch_upgraded]
-        print(f"\nTotal 'audio MISS' events: {ch_miss_total}"
-              f" ({len(ch_missed_seqs)} distinct segments)")
-        print(f"  Recovered via late-audio upgrade: {len(ch_missed_recovered)}/{len(ch_missed_seqs)}")
-        print(f"Disc boundaries seen: {len(ch_disc)}")
+        print(f"\nDisc boundaries seen: {len(ch_disc)}")
         print(f"Epoch resyncs: {len(ch_resync)}")
         for r in ch_resync:
             print("  resync:", r)
         print(f"Stale-epoch fallback matches (audio reused from the prior epoch): {len(ch_stale_epoch)}")
-        for s in ch_stale_epoch[:example_limit]:
-            print("  ", s)
+        for _ch, s_seq, s_epoch in ch_stale_epoch[:example_limit]:
+            print(f"  chunk_seq={s_seq} matched_epoch={s_epoch}")
 
         print(f"\nServed from cache (cache hit): {len(ch_cache_hits)}")
         print(f"Served via on-demand fallback path: {len(ch_fallback)}")
-        print(f"Prefetch-miss events (forced on-demand fallback): {len(ch_prefetch_miss)}")
+        print(f"Prefetch-miss events (chunk never produced, extended-wait/last-chunk fallback): {len(ch_prefetch_miss)}")
+        print(f"Last-resort stale re-serves (no chunk available at all, repeated a prior one): {len(ch_stale_reserve)}")
+        for _ch, seq, reason, reused_seq in ch_stale_reserve[:example_limit]:
+            print(f"  chunk_seq={seq} reason={reason!r} repeated_chunk_seq={reused_seq}")
+        print(f"Duplicate video segments dropped (CDN frame-repeat at splice, not appended): {len(ch_duplicates)}")
 
-        print(f"\nFirst {example_limit} never-upgraded silence segments (seq):")
+        print(f"\nFirst {example_limit} never-upgraded silence windows:")
         for seq in ch_never_upgraded[:example_limit]:
-            confirmed = " (confirmed sliver: no matching audio in source)" if seq in ch_slivers else ""
-            print("  ", seq, confirmed)
+            if seq in ch_slivers:
+                status = "confirmed: _resolve_late_audio_window gave up, no audio ever covered this window"
+            else:
+                status = "retry unresolved as of end of log - still in flight, or evicted before it could conclude"
+            print(f"  chunk_seq={seq}: {status}")
 
     print(f"\nMux/tempfile failures (session-wide): {len(mux_failures)}")
     for f in mux_failures[:example_limit]:

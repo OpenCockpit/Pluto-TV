@@ -16,6 +16,7 @@ from enigma import eTimer
 from twisted.internet import reactor
 
 from . import _
+from .Debug import logger
 from .PlutoTVConfig import COUNTRY_NAMES, TSIDS, getselectedcountries
 from .LiveProxy import PROXY_HOST, PROXY_PORT
 from .PlutoTVRequest import plutoRequest
@@ -38,7 +39,7 @@ class PlutoTVDownloadBase(TVDownloadBase):
     SILENT_IN_PROGRESS_TEXT = _("A silent download is in progress.")
     PICONS_LABEL = _("picons")
     FETCHING_PICONS_TEXT = _("Fetching picons...")
-    UPDATE_COMPLETED_TEXT = _("LiveTV update completed")
+    UPDATE_COMPLETED_TEXT = _("Live-TV update completed")
     PROCESSING_TEXT = _("Processing data...")
     WAITING_FOR_CHANNEL_TEXT = _("Waiting for Channel: ")
 
@@ -91,6 +92,8 @@ class PlutoTVDownloadBase(TVDownloadBase):
         guide = self.getGuidedata(cc)
         for event in guide:
             self.buildGuide(event)
+        total_events = sum(len(v) for v in self.guideList.values())
+        logger.debug("_importGuide: %s: %d guide entries fetched, %d channels with events, %d events total", cc, len(guide), len(self.guideList), total_events)
 
     def _buildBouquetEntry(self, key, chitem):
         ch_sid, ch_hash, ch_name, ch_logourl, _id = self.channelsList[key][chitem]
@@ -105,7 +108,7 @@ class PlutoTVDownloadBase(TVDownloadBase):
         else:
             stream_url = plutoRequest.PLUTO_SCHEMA + _id
 
-        ref = f"4097:0:1:{ch_sid}:{self.tsid}:1:2:0:0:0"
+        ref = f"4097:0:1:{ch_sid}:{self.tsid}:FF:CCCC0000:0:0:0"
 
         chevents = []
         if ch_hash in self.guideList:
@@ -121,7 +124,7 @@ class PlutoTVDownloadBase(TVDownloadBase):
         if len(chevents) > 0:
             iterator = iter(chevents)
             events_tuple = tuple(iterator)
-            reactor.callFromThread(self.epgcache.importEvents, ref + ":https%3a//.m3u8", events_tuple)
+            reactor.callFromThread(self.epgcache.importEvents, f"{ref}:{stream_url}", events_tuple)
 
         return ref, stream_url, ch_name, ch_logourl
 
@@ -258,7 +261,7 @@ class PlutoTVDownload(TVDownloadScreenMixin, PlutoTVDownloadBase, Screen):
         self["action"].text = _("Updating: Pluto TV %s") % cc.upper()
 
     def noCategories(self):
-        self.session.openWithCallback(self.exitOk, MessageBox, _("There is no data, it is possible that Pluto TV is not available in your country"), type=MessageBox.TYPE_ERROR, timeout=10)
+        self.session.open(MessageBox, _("There is no data, it is possible that Pluto TV is not available in your country"), type=MessageBox.TYPE_ERROR, timeout=10)
 
     def _restartSilentTimer(self):
         Silent.stop()

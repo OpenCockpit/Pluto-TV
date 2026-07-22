@@ -3,7 +3,6 @@
 import concurrent.futures
 import os
 import shutil
-import time
 from itertools import count as _count
 
 import requests
@@ -38,14 +37,13 @@ class PiconFetcher:
 
     def addPicon(self, ref, name, url, silent):
         """Queue a picon for download.  Call before fetchPicons()."""
-        if not self._picons_config.value or not url:
+        if not self._picons_config.value or not url or silent:
             return
         if self._picons_config.value == "snp" and (ch_name := sanitizeFilename(name.lower())):
             piconname = os.path.join(self.piconDir, ch_name + ".png")
         else:
             piconname = os.path.join(self.piconDir, ref.replace(":", "_") + ".png")
-        one_week_ago = time.time() - 60 * 60 * 24 * 7
-        if not (fileExists(piconname) and (silent or os.path.getmtime(piconname) > one_week_ago)):
+        if not fileExists(piconname):
             self.piconList.append((url, piconname))
 
     def fetchPicons(self):

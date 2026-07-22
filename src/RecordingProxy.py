@@ -272,10 +272,6 @@ class RecordingSession:
                     muxed = state._ready_segs.get(seq)
                     provisional = seq in state._provisional_segs
                     newest = max(state._ready_segs) if state._ready_segs else None
-                if state.is_duplicate(seq):
-                    seq += 1
-                    wait_start = None
-                    continue
                 if muxed is not None and not provisional:
                     self._output(muxed)
                     seq += 1
