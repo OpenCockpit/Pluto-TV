@@ -48,31 +48,35 @@
 #   (see ApScWriter._h264_kf_seen) for diagnostic visibility, but no longer
 #   gates any .ap write.
 #
-#   Third departure, and a deliberate one: this module no longer writes .ap
-#   at all (ApScWriter._open_files only opens .sc; _write_ap is a no-op).
-#   enigma2's own seek resolution (eDVBTSTools::getOffset, lib/dvb/tstools.cpp)
-#   branches on eMPEGStreamInformation::hasAccessPoints() (lib/dvb/pvrparse.h) -
-#   when true, it resolves every seek against the in-memory access-point map
-#   that eDVBChannel::playSource() loaded from .ap exactly once, when the file
-#   was first opened for playback (lib/dvb/dvb.cpp; nothing anywhere in
-#   dvb.cpp/pvrparse.cpp/servicedvb.cpp ever reloads it during that same
-#   session). Confirmed in production: watching a PlutoTVCockpit recording
-#   while it's still actively being written let seeking/skipping reach only
-#   whatever position .ap covered at the moment playback opened the file -
-#   any further skip, no matter how large, landed on that same frozen offset.
-#   When hasAccessPoints() is false instead (no .ap loaded), getOffset() takes
-#   a completely different path: calcBeginAndEnd() + takeSamples(), an
-#   interpolation-based estimate that calls the source's current length()
-#   fresh on every call - so it naturally tracks a still-growing file instead
-#   of a one-time snapshot. TimeshiftCockpit's own recordings independently
-#   confirm this works well in practice: its recording pipeline
-#   (TSRecordingTaskExecution.copyTSRecording) runs the real createapscfiles
-#   tool once on an already-complete, static file, and in practice those
-#   recordings end up with only a .sc file, never an .ap - and skip/jump on
-#   them is smooth with no such ceiling. .sc (frame/structure boundaries,
-#   used for trick-play stepping) is unaffected either way and is still
-#   generated normally.
+#   Third departure: .ap is buffered in memory throughout the recording and
+#   only ever written to disk once, at close() - never touched live. This
+#   matches enigma2's own native DVB record path exactly: eDVBRecordFileThread
+#   ties .sc to startSave() (opened immediately, written incrementally, same
+#   as this module always did) but .ap to stopSave() (lib/dvb/pvrparse.cpp) -
+#   accumulated into m_access_points/m_streamtime_access_points in memory the
+#   whole time, and only opened/written as a single complete file at the very
+#   end of recording. A live/growing recording therefore never has a .ap on
+#   disk at all - confirmed by inspecting real DVB recordings mid-record.
+#
+#   That distinction is what an earlier version of this module got wrong: it
+#   opened .ap immediately alongside .sc and flushed entries to it live,
+#   which does explain a real, confirmed-in-production bug - watching a
+#   recording while it was still being written let seeking reach only
+#   whatever position .ap covered at the moment playback opened the file (see
+#   eDVBTSTools::getOffset, lib/dvb/tstools.cpp, branching on
+#   eMPEGStreamInformation::hasAccessPoints() and loading that map exactly
+#   once, in eDVBChannel::playSource(), lib/dvb/dvb.cpp - never reloaded for
+#   that session). The actual fix implied by native's own behavior isn't "an
+#   .ap must never exist for a live recording", it's "an .ap must never exist
+#   for a recording that isn't finished yet" - which is exactly what
+#   accumulate-in-memory/write-once-at-close gives us, same as native. A
+#   still-growing recording has no .ap (hasAccessPoints() false, getOffset()
+#   falls back to calcBeginAndEnd()+takeSamples(), which calls the source's
+#   current length() fresh on every call and so tracks growth correctly); a
+#   finished one gets a real, complete access-point index instead of forcing
+#   the slower interpolation fallback forever.
 
+import os
 import struct
 
 from .Debug import logger
@@ -207,7 +211,7 @@ class ApScWriter:
 
     def __init__(self, ts_path: str):
         self._path = ts_path
-        self._ap = None
+        self._ap_entries = []
         self._sc = None
         self._disabled = False
         self._buf = bytearray()
@@ -274,10 +278,9 @@ class ApScWriter:
         self._next_pkt = npkts
 
     def _open_files(self) -> None:
-        """Create .sc only - see the module docstring's third departure for
-        why .ap is deliberately never created. self._ap stays None forever;
-        _write_ap() no-ops on that, so the IDR/AUD detection in _scan() that
-        would otherwise feed it is harmless dead work, not a crash risk.
+        """Open .sc immediately (matches native's startSave()) - .ap has
+        nothing to open here, see the module docstring's third departure:
+        it's buffered in self._ap_entries and only written once, in close().
         """
         self._sc = open(self._path + '.sc', 'wb')  # pylint: disable=consider-using-with
 
@@ -341,10 +344,7 @@ class ApScWriter:
         self._scan_from = i
 
     def _write_ap(self, offset: int, pts: int) -> None:
-        if self._ap is None:
-            return
-        self._ap.write(struct.pack('>QQ', offset & _U64_MASK, pts & _U64_MASK))
-        self._ap.flush()
+        self._ap_entries.append((offset, pts))
 
     def _write_sc(self, offset: int, dat: int) -> None:
         self._sc.write(struct.pack('>QQ', offset & _U64_MASK, dat & _U64_MASK))
@@ -373,12 +373,34 @@ class ApScWriter:
         if self._h264_aud_seen:
             logger.debug('%s: H.264 summary: AUD-hint kf %s/%s'
                          " (0 here means this stream's encoder never signals primary_pic_type==0,"
-                         ' as confirmed in production) | IDR-NAL access points seen: %s'
-                         ' (diagnostic only - .ap is deliberately not written, see module docstring)',
+                         ' as confirmed in production) | IDR-NAL access points seen: %s',
                          self._path, self._h264_kf_seen, self._h264_aud_seen, self._h264_idr_seen)
-        if self._ap is not None:
-            self._ap.close()
-            self._ap = None
         if self._sc is not None:
             self._sc.close()
             self._sc = None
+        self._write_ap_file()
+
+    def _write_ap_file(self) -> None:
+        """Write the whole buffered .ap in one shot, now that recording has
+        actually stopped - mirrors eMPEGStreamInformationWriter::stopSave()
+        writing from its own in-memory deque instead of a live fd (see the
+        module docstring's third departure). Matches stopSave()'s own guards:
+        skip entirely rather than create an empty/near-empty file, and unlink
+        on a partial write instead of leaving a truncated .ap behind - a
+        half-written index is worse than none, same reasoning as there.
+        """
+        if not self._ap_entries:
+            return
+        ap_path = self._path + '.ap'
+        try:
+            with open(ap_path, 'wb') as f:
+                for offset, pts in self._ap_entries:
+                    f.write(struct.pack('>QQ', offset & _U64_MASK, pts & _U64_MASK))
+        except OSError as exc:
+            logger.debug('%s: failed to write %s, removing it: %r', self._path, ap_path, exc)
+            try:
+                os.unlink(ap_path)
+            except OSError:
+                pass
+            return
+        logger.debug('%s: wrote %s (%s access points)', self._path, ap_path, len(self._ap_entries))

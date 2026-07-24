@@ -20,7 +20,7 @@ from .Debug import logger
 from .PlutoTVConfig import COUNTRY_NAMES, TSIDS, getselectedcountries
 from .LiveProxy import PROXY_HOST, PROXY_PORT
 from .PlutoTVRequest import plutoRequest
-from .Variables import TIMER_FILE, BOUQUET_FILE, BOUQUET_NAME, CHANNELLIST_FILE, XMLTV_FILE
+from .Variables import TIMER_FILE, NODATA_FILE, BOUQUET_FILE, BOUQUET_NAME, CHANNELLIST_FILE, XMLTV_FILE
 from .CockpitTVDownload import TVDownloadBase, TVDownloadScreenMixin, TVDownloadSilentMixin
 from .M3UPlaylist import writeM3UPlaylist
 from .XMLTVWriter import writeXMLTVFile
@@ -30,6 +30,7 @@ class PlutoTVDownloadBase(TVDownloadBase):
     downloadActive = False
 
     TIMER_FILE = TIMER_FILE
+    NODATA_FILE = NODATA_FILE
     BOUQUET_FILE = BOUQUET_FILE
     CHANNELLIST_FILE = CHANNELLIST_FILE
     XMLTV_FILE = XMLTV_FILE
@@ -43,8 +44,8 @@ class PlutoTVDownloadBase(TVDownloadBase):
     PROCESSING_TEXT = _("Processing data...")
     WAITING_FOR_CHANNEL_TEXT = _("Waiting for Channel: ")
 
-    def __init__(self, silent=False):
-        TVDownloadBase.__init__(self, silent)
+    def __init__(self, silent=False, locations=None):
+        TVDownloadBase.__init__(self, silent, locations)
         self.guideList = {}
 
     def _clearPluginState(self):
@@ -242,12 +243,12 @@ class PlutoTVDownload(TVDownloadScreenMixin, PlutoTVDownloadBase, Screen):
 
     EXIT_CONFIRM_TEXT = _("The download is in progress. Exit now?")
 
-    def __init__(self, session):
+    def __init__(self, session, locations=None):
         self.session = session
         Screen.__init__(self, session)
         self.skinName = "DownloadProgress"
         self.title = _("PlutoTV updating")
-        PlutoTVDownloadBase.__init__(self)
+        PlutoTVDownloadBase.__init__(self, locations=locations)
         self.total = 0
         self["progress"] = ProgressBar()
         self["action"] = Label()
@@ -260,8 +261,8 @@ class PlutoTVDownload(TVDownloadScreenMixin, PlutoTVDownloadBase, Screen):
     def updateAction(self, cc=""):
         self["action"].text = _("Updating: Pluto TV %s") % cc.upper()
 
-    def noCategories(self):
-        self.session.open(MessageBox, _("There is no data, it is possible that Pluto TV is not available in your country"), type=MessageBox.TYPE_ERROR, timeout=10)
+    def noCategories(self, cc=""):
+        self.session.open(MessageBox, _("There is no data for %s. It may be caused by geo-blocking, or Pluto TV may not be available in your country.") % COUNTRY_NAMES.get(cc, cc), type=MessageBox.TYPE_ERROR, timeout=10)
 
     def _restartSilentTimer(self):
         Silent.stop()

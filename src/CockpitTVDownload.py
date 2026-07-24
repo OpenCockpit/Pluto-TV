@@ -15,6 +15,18 @@ from .M3UPlaylist import writeM3UPlaylist
 from .Debug import logger
 
 
+def loadNoDataLocations(path):
+    """Read a NODATA_FILE (one cc per line) into a set - shared by
+    TVDownloadBase (which also writes it) and each plugin's Cockpit screen
+    (which only needs to read it, to know a missing bouquet is a known
+    geo-block rather than one a re-update could still fix)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return {line.strip() for line in f if line.strip()}
+    except OSError:
+        return set()
+
+
 class TVDownloadBase:
     """Shared bouquet/EPG download workflow for FAST-channel TV Cockpit plugins
     (Pluto TV, Rakuten TV, Samsung TV Plus, ...).
@@ -27,6 +39,11 @@ class TVDownloadBase:
         downloadActive (bool)   -- must be redeclared, not inherited, per plugin
         LOG_PREFIX (str)        -- tag used in internal (untranslated) log prints
         TIMER_FILE (str)        -- from the plugin's own Variables.py
+        NODATA_FILE (str)       -- from the plugin's own Variables.py; persists which
+                                    selected locations came back empty (e.g.
+                                    geo-blocked) on their last attempt, so the
+                                    "needs updating" status doesn't nag forever
+                                    about a location a re-update can't fix
         BOUQUET_FILE (str)      -- from the plugin's own Variables.py
         TSIDS (dict)            -- from the plugin's own Config.py
         SILENT_IN_PROGRESS_TEXT, PICONS_LABEL, FETCHING_PICONS_TEXT,
@@ -88,7 +105,7 @@ class TVDownloadBase:
     EPGIMPORT_MISSING_TEXT = "EPGImport plugin not installed - no EPG data was imported."
     CHANNELLIST_FILE = None
 
-    def __init__(self, silent=False):
+    def __init__(self, silent=False, locations=None):
         self.channelsList = {}
         self.categories = []
         self.m3uEntries = {}
@@ -96,6 +113,8 @@ class TVDownloadBase:
         self.silent = silent
         self.epgcache = eEPGCache.getInstance()
         self.epgimport_missing = False
+        self._downloadLocations = locations
+        self._updatedLocations = []
         self._setDownloadActive(False)
 
     def _downloadActiveOwner(self):
@@ -135,20 +154,53 @@ class TVDownloadBase:
             if m:
                 yield m.group(1), filename
 
-    def _clearBouquet(self, cc, filename):
-        """Empty an existing bouquet's content in place instead of deleting
-        it via eDVBDB.removeBouquet(), so its file and its position in
-        bouquets.tv survive - only the per-channel content is cleared here,
-        to be completely rewritten by addOrUpdateBouquet() later for
-        locations that get re-downloaded in this same run."""
-        eDVBDB.getInstance().addOrUpdateBouquet(self._bouquetName(cc), filename, [], False)
+    def _removeBouquet(self, cc, filename):
+        """Delete an existing bouquet that's no longer part of the location
+        config, via eDVBDB.removeBouquet() (which takes a filename regex, so
+        the literal filename is escaped) - along with that location's
+        supplementary channellist/XMLTV exports, which would otherwise be
+        left orphaned on disk with no bouquet left to match them to."""
+        eDVBDB.getInstance().removeBouquet(re.escape(filename))
+        if self.CHANNELLIST_FILE:
+            self._removeIfExists(os.path.join(self._configFolder(), self.CHANNELLIST_FILE % cc))
+        self._removeIfExists(os.path.join(self._configFolder(), self.XMLTV_FILE % cc))
+
+    @staticmethod
+    def _removeIfExists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    def _loadNoDataLocations(self):
+        return loadNoDataLocations(self.NODATA_FILE)
+
+    def _saveNoDataLocations(self, locations):
+        os.makedirs(os.path.dirname(self.NODATA_FILE), exist_ok=True)
+        with open(self.NODATA_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(sorted(locations)))
+
+    def _markLocationNoData(self, cc):
+        """Remember that *cc* came back empty (e.g. geo-blocked) this run, so a
+        status check elsewhere doesn't keep claiming a re-update would help."""
+        locations = self._loadNoDataLocations()
+        if cc not in locations:
+            locations.add(cc)
+            self._saveNoDataLocations(locations)
+
+    def _markLocationUpdated(self, cc):
+        """Clear any stale no-data marker for *cc* once it's successfully updated."""
+        locations = self._loadNoDataLocations()
+        if cc in locations:
+            locations.discard(cc)
+            self._saveNoDataLocations(locations)
 
     def cc(self):
         locations = [x for x in self._selectedLocations() if x] or [self._defaultLocation()]
         for cc, filename in self._existingBouquets():
             if cc not in locations:
-                self._clearBouquet(cc, filename)
-        yield from locations
+                self._removeBouquet(cc, filename)
+        yield from (self._downloadLocations if self._downloadLocations else locations)
 
     def download(self):
         if self._isDownloadActive():
@@ -156,6 +208,7 @@ class TVDownloadBase:
                 self.session.openWithCallback(self.close, MessageBox, self.SILENT_IN_PROGRESS_TEXT, MessageBox.TYPE_INFO, timeout=30)
             logger.info("A silent download is in progress.")
             return
+        self._updatedLocations = []
         self.ccGenerator = self.cc()
         self.piconFetcher = PiconFetcher(self._picons_config(), self)
         threads.deferToThread(self._downloadThread)
@@ -231,7 +284,8 @@ class TVDownloadBase:
         self.total = sum(len(v) for v in self.channelsList.values())
 
         if len(self.categories) == 0:
-            reactor.callFromThread(self.noCategories)
+            self._markLocationNoData(cc)
+            reactor.callFromThread(self.noCategories, cc)
             self._managerThread()
         else:
             if self.categories[0] in self.channelsList:
@@ -276,9 +330,12 @@ class TVDownloadBase:
                 reactor.callFromThread(self.updateStatus, self.WAITING_FOR_CHANNEL_TEXT + ch_name)
             elif self.total > 0 and self.resolved_count == 0:
                 logger.error("%s: no channel resolved a stream URL, leaving existing bouquet unchanged", self.bouquetCC)
-                reactor.callFromThread(self.noCategories)
+                self._markLocationNoData(self.bouquetCC)
+                reactor.callFromThread(self.noCategories, self.bouquetCC)
                 self._managerThread()
             else:
+                self._updatedLocations.append(self.bouquetCC)
+                self._markLocationUpdated(self.bouquetCC)
                 bouquet_name = self._bouquetName(self.bouquetCC)
                 bouquet_file = self.BOUQUET_FILE % self.bouquetCC
                 reactor.callFromThread(eDVBDB.getInstance().addOrUpdateBouquet, bouquet_name, bouquet_file, self.bouquet, False)
@@ -315,7 +372,7 @@ class TVDownloadBase:
     def updateAction(self, cc=""):
         pass
 
-    def noCategories(self):
+    def noCategories(self, cc=""):
         pass
 
 
@@ -343,7 +400,7 @@ class TVDownloadScreenMixin:
     def exitOk(self, answer=True):
         if answer:
             self._restartSilentTimer()
-            self.close(True)
+            self.close(self._updatedLocations)
 
     def updateProgressBar(self, param):
         try:
@@ -394,8 +451,8 @@ class TVDownloadSilentMixin:
             if callable(f):
                 f()
 
-    def noCategories(self):
-        logger.debug("There is no data, it is possible that %s is not available in your %s.", self.FRIENDLY_NAME, self.LOCATION_WORD)
+    def noCategories(self, cc=""):
+        logger.debug("There is no data for %s, it is possible that %s is not available in your %s.", cc, self.FRIENDLY_NAME, self.LOCATION_WORD)
 
 
 def importXMLTVGuide(epgcache, log_prefix, path, xmltv_bytes, channels_map):
@@ -432,13 +489,29 @@ def importXMLTVGuide(epgcache, log_prefix, path, xmltv_bytes, channels_map):
     try:
         xmltv_parser = XMLTVConverter(channels_map, {})
         evt_cnt = 0
+        fail_cnt = [0]
+
+        def _importOne(sref, event):
+            try:
+                epgcache.importEvents(sref, [event])
+            except Exception as e:
+                fail_cnt[0] += 1
+                logger.error("%s: importEvents failed for %s: %s", log_prefix, sref, e)
+
         for item in xmltv_parser.enumFile(BytesIO(xmltv_bytes)):
             if not item:
                 continue
             sref, event = item
             evt_cnt += 1
-            reactor.callFromThread(epgcache.importEvents, sref, [event])
-        logger.debug("%s: %s EPG events imported", log_prefix, evt_cnt)
+            reactor.callFromThread(_importOne, sref, event)
+
+        def _logSummary():
+            if fail_cnt[0]:
+                logger.error("%s: %s of %s EPG events failed to import (see errors above)", log_prefix, fail_cnt[0], evt_cnt)
+            else:
+                logger.debug("%s: %s EPG events imported", log_prefix, evt_cnt)
+
+        reactor.callFromThread(_logSummary)
     except Exception as e:
         logger.error("%s: EPG import error: %s", log_prefix, e)
     return True

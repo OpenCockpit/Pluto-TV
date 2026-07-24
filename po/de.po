@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-20 15:17+0200\n"
-"PO-Revision-Date: 2026-07-20 15:34+0200\n"
+"POT-Creation-Date: 2026-07-23 13:44+0200\n"
+"PO-Revision-Date: 2026-07-23 13:44+0200\n"
 "Last-Translator: xcentaurix\n"
 "Language-Team: xcentaurix\n"
 "Language: de\n"
@@ -56,6 +56,12 @@ msgstr "Picon-Typ"
 
 msgid "Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references."
 msgstr "Picons mit Servicenamen funktionieren auch, wenn sich die Service-Referenz ändert. Sie können auch von Kanälen mit unterschiedlichen Service-Referenzen geteilt werden."
+
+msgid "Automatic update check"
+msgstr "Automatische Update-Überprüfung"
+
+msgid "Automatically check for a newer package update when the plugin GUI is opened."
+msgstr "Beim Öffnen des Plugins überprüfen, ob eine neuere Plugin-Version verfügbar ist."
 
 msgid "Data location"
 msgstr "Daten-Verzeichnis"
@@ -117,8 +123,8 @@ msgstr "VoD-Menü"
 msgid "PlutoTV"
 msgstr "PlutoTV"
 
-msgid "There is no data, it is possible that Pluto TV is not available in your country"
-msgstr "Keine Daten verfügbar - es ist möglich, dass PlutoTV nicht verfügbar ist."
+msgid "There is no data for %s. It may be caused by geo-blocking, or Pluto TV may not be available in your country."
+msgstr "Es konnten keine Daten für %s geladen werden. Dies könnte durch Geo-Blocking verursacht werden oder Pluto TV ist in Ihrem Land nicht verfügbar."
 
 msgid "Episode"
 msgstr "Episode"
@@ -130,13 +136,16 @@ msgid "Seasons"
 msgstr "Staffeln"
 
 msgid ""
-"The Pluto TV bouquets in your channel list have been updated.\n"
+"The Pluto TV bouquets for %s in your channel list have been updated.\n"
 "\n"
 "They will now be rebuilt automatically every 5 hours."
 msgstr ""
-"Die PlutoTV-Bouquets in der Kanalliste wurden aktualisiert.\n"
+"Die PlutoTV-Bouquets für %s in der Kanalliste wurden aktualisiert.\n"
 "\n"
 "Sie werden jetzt alle 5 Stunden neu erstellt."
+
+msgid "All"
+msgstr "Alle"
 
 msgid "Update Live-TV Bouquet"
 msgstr "Live-TV-Bouquet aktualisieren"
@@ -174,6 +183,12 @@ msgstr "JMP2-Proxy"
 msgid "i.mjh.nz"
 msgstr "i.mjh.nz-Proxy"
 
+msgid "Yes"
+msgstr "Ja"
+
+msgid "No"
+msgstr "Nein"
+
 msgid "A silent download is in progress."
 msgstr "Ein Download läuft im Hintergrund."
 
@@ -203,6 +218,12 @@ msgstr "Bitte warten..."
 
 msgid "Updating: Pluto TV %s"
 msgstr "Update: PlutoTV %s"
+
+msgid "The package has been installed. Restart Enigma2 now to load the update?"
+msgstr "Das Package wurde installiert - Enigma2 jetzt neu starten, um das Update zu laden?"
+
+msgid "A newer PlutoTVCockpit package (%s) is available. Do you want to install it now?"
+msgstr "Eine neuere PlutoTVCockpit-Paketversion (%s) ist verfügbar. Möchten Sie sie jetzt installieren?"
 
 msgid "PlutoTVCockpit"
 msgstr "PlutoTV"

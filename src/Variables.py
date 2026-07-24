@@ -7,6 +7,7 @@ from .Version import PLUGIN
 
 
 TIMER_FILE = path.join(path.realpath(resolveFilename(SCOPE_CONFIG)), PLUGIN, PLUGIN + ".timer")
+NODATA_FILE = path.join(path.realpath(resolveFilename(SCOPE_CONFIG)), PLUGIN, PLUGIN + ".nodata")
 RESUMEPOINTS_FILE = path.join(path.realpath(resolveFilename(SCOPE_CONFIG)), PLUGIN, "resumepoints.pkl")
 PLUGIN_FOLDER = path.dirname(path.realpath(__file__))
 PLUGIN_ICON = "plugin.png"

@@ -28,8 +28,9 @@ from .PlutoTVConfig import COUNTRY_NAMES, getselectedcountries
 from .PlutoTVRequest import plutoRequest
 from .PlutoTVDownload import PlutoTVDownload, Silent
 from .PRSUtils import PRSUtils
+from .CockpitTVDownload import loadNoDataLocations
 from .CockpitTVUtils import pickBestImage
-from .Variables import TIMER_FILE, BOUQUET_FILE
+from .Variables import TIMER_FILE, NODATA_FILE, BOUQUET_FILE
 from .PRSList import PRSList
 from .PlutoSetup import PlutoSetup
 from .PRSPlayer import PRSPlayer
@@ -217,7 +218,7 @@ class PlutoTVCockpit(Screen, HelpableScreen):
 
     def getCategoriesCallback(self, ondemand):
         if not (categories := ondemand.get("categories", [])):
-            self.session.open(MessageBox, _("There is no data, it is possible that Pluto TV is not available in your country"), type=MessageBox.TYPE_ERROR, timeout=10)
+            self.session.open(MessageBox, _("There is no data for %s. It may be caused by geo-blocking, or Pluto TV may not be available in your country.") % COUNTRY_NAMES.get(self.country, self.country), type=MessageBox.TYPE_ERROR, timeout=10)
         else:
             for category in categories:
                 self.buildlist(category)
@@ -397,15 +398,36 @@ class PlutoTVCockpit(Screen, HelpableScreen):
                 self.session.open(PRSPlayer, service=reference, sid=self._play_sid, resume_points=resumePointsInstance)
 
     def green(self):
-        self.session.openWithCallback(self.endupdateLive, PlutoTVDownload)
+        locations = [x for x in getselectedcountries() if x] or [config.plugins.plutotv.country.value]
+        if len(locations) <= 1:
+            self.session.openWithCallback(self.endupdateLive, PlutoTVDownload)
+            return
+        choices = [(_("All"), None)] + [(COUNTRY_NAMES.get(cc, cc), cc) for cc in locations]
+        self.session.openWithCallback(
+            self.greenChoice,
+            ChoiceBox,
+            title=_("Select a Live-TV bouquet to update"),
+            list=choices,
+            keys=[]
+        )
+
+    def greenChoice(self, result=None):
+        if result is None:
+            return
+        self.session.openWithCallback(self.endupdateLive, PlutoTVDownload, locations=[result[1]] if result[1] else None)
 
     def endupdateLive(self, _ret=None):
-        self.session.openWithCallback(self.updatebutton, MessageBox, _("The Pluto TV bouquets in your channel list have been updated.\n\nThey will now be rebuilt automatically every 5 hours."), type=MessageBox.TYPE_INFO, timeout=10)
+        if _ret:
+            countries = ", ".join(COUNTRY_NAMES.get(cc, cc) for cc in _ret)
+            self.session.openWithCallback(self.updatebutton, MessageBox, _("The Pluto TV bouquets for %s in your channel list have been updated.\n\nThey will now be rebuilt automatically every 5 hours.") % countries, type=MessageBox.TYPE_INFO, timeout=10)
+        else:
+            self.updatebutton()
 
     def updatebutton(self, _ret=None):
         with open("/etc/enigma2/bouquets.tv", "r", encoding="utf-8") as f:
             bouquets = f.read()
-        if fileExists(TIMER_FILE) and all(((BOUQUET_FILE % cc) in bouquets) for cc in [x for x in getselectedcountries() if x]):
+        nodata = loadNoDataLocations(NODATA_FILE)
+        if fileExists(TIMER_FILE) and all(((BOUQUET_FILE % cc) in bouquets or cc in nodata) for cc in [x for x in getselectedcountries() if x]):
             with open(TIMER_FILE, "r", encoding="utf-8") as f:
                 last = float(f.read().replace("\n", "").replace("\r", ""))
             updated = strftime(" %x %H:%M", localtime(int(last)))

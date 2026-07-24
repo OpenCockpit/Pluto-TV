@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-20 15:17+0200\n"
-"PO-Revision-Date: 2026-07-20 15:34+0200\n"
+"POT-Creation-Date: 2026-07-23 13:44+0200\n"
+"PO-Revision-Date: 2026-07-23 13:44+0200\n"
 "Last-Translator: xcentaurix\n"
 "Language-Team: xcentaurix\n"
 "Language: de\n"
@@ -61,6 +61,13 @@ msgid ""
 "Using service name picons means they will continue to work even if the "
 "service reference changes. Also, they can be shared between channels of the "
 "same name that don't have the same service references."
+msgstr ""
+
+msgid "Automatic update check"
+msgstr ""
+
+msgid ""
+"Automatically check for a newer package update when the plugin GUI is opened."
 msgstr ""
 
 msgid "Data location"
@@ -124,8 +131,8 @@ msgid "PlutoTV"
 msgstr ""
 
 msgid ""
-"There is no data, it is possible that Pluto TV is not available in your "
-"country"
+"There is no data for %s. It may be caused by geo-blocking, or Pluto TV may "
+"not be available in your country."
 msgstr ""
 
 msgid "Episode"
@@ -138,9 +145,12 @@ msgid "Seasons"
 msgstr ""
 
 msgid ""
-"The Pluto TV bouquets in your channel list have been updated.\n"
+"The Pluto TV bouquets for %s in your channel list have been updated.\n"
 "\n"
 "They will now be rebuilt automatically every 5 hours."
+msgstr ""
+
+msgid "All"
 msgstr ""
 
 msgid "Update Live-TV Bouquet"
@@ -179,6 +189,12 @@ msgstr ""
 msgid "i.mjh.nz"
 msgstr ""
 
+msgid "Yes"
+msgstr ""
+
+msgid "No"
+msgstr ""
+
 msgid "A silent download is in progress."
 msgstr ""
 
@@ -207,6 +223,14 @@ msgid "Please wait..."
 msgstr ""
 
 msgid "Updating: Pluto TV %s"
+msgstr ""
+
+msgid "The package has been installed. Restart Enigma2 now to load the update?"
+msgstr ""
+
+msgid ""
+"A newer PlutoTVCockpit package (%s) is available. Do you want to install it "
+"now?"
 msgstr ""
 
 msgid "PlutoTVCockpit"

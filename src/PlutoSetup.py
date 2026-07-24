@@ -10,9 +10,10 @@ from Components.Sources.StaticText import StaticText
 from Screens.Setup import Setup
 
 from . import _
-from .PlutoTVDownload import Silent
+from .PlutoTVDownload import PlutoTVDownload, Silent
 from .PiconFetcher import PiconFetcher
 from .Variables import BOUQUET_FILE, NUMBER_OF_LIVETV_BOUQUETS
+from .Version import VERSION
 
 
 class PlutoSetup(Setup):
@@ -30,7 +31,7 @@ class PlutoSetup(Setup):
             }, prio=1, description=_("PlutoTV Setup Actions"))
         self.updateYellowButton()
         self.updateBlueButton()
-        self.setTitle(_("PlutoTV Setup"))
+        self.setTitle(_("PlutoTV Setup") + f" ({VERSION})")
 
     def createSetup(self):
         configList = []
@@ -42,8 +43,20 @@ class PlutoSetup(Setup):
         configList.append(("---",))
         configList.append((_('Live TV mode'), config.plugins.plutotv.live_tv_mode, _('Select the stream provider. Stitcher uses the native Pluto server with JWT auth (resolved at playback). JMP2 uses the jmp2.uk proxy. i.mjh.nz uses Matt Huisman\'s community playlist. Requires bouquet update to take effect.')))
         configList.append((_("Picon type"), config.plugins.plutotv.picons, _("Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references.")))
+        configList.append((_("Automatic update check"), config.plugins.plutotv.auto_update_check, _("Automatically check for a newer package update when the plugin GUI is opened.")))
         configList.append((_("Data location"), config.plugins.plutotv.config_folder, _("Location the config data are stored in.")))
         self["config"].list = configList
+
+    def _locationConfigChanged(self):
+        if config.plugins.plutotv.country.isChanged():
+            return True
+        return any(getattr(config.plugins.plutotv, "live_tv_country" + str(n)).isChanged() for n in range(1, NUMBER_OF_LIVETV_BOUQUETS + 1))
+
+    def keySave(self):
+        if self._locationConfigChanged():
+            self.session.openWithCallback(lambda *_: Setup.keySave(self), PlutoTVDownload)
+        else:
+            Setup.keySave(self)
 
     def updateYellowButton(self):
         if os.path.isdir(PiconFetcher(config.plugins.plutotv.picons).pluginPiconDir):
