@@ -38,7 +38,7 @@ class PRSList(MenuList):
 
         for icon_name in icons:
             fallback = os.path.join(icon_dir, f"{icon_name}.png")
-            resolved = x if fileExists(x := resolveFilename(SCOPE_CURRENT_SKIN, f"icons/{icon_name}.png")) else fallback
+            resolved = x if fileExists(x := resolveFilename(SCOPE_CURRENT_SKIN, f"icons/{PLUGIN}/{icon_name}.png")) else fallback
             setattr(self, f"{icon_name}_png", LoadPixmap(resolved) if fileExists(resolved) else None)
 
         MenuList.__init__(self, entries, content=eListboxPythonMultiContent)

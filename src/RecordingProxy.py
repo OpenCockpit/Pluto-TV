@@ -53,10 +53,8 @@ import threading
 import time
 from queue import Queue, Full, Empty
 
-from .ApSc import ApScWriter
 from .Debug import logger
 from .LiveProxy import _ensure_pipeline, _get_state, _first_pts
-from .PlutoTVRequest import recording_filename_for
 
 _POLL_INTERVAL = 0.1
 _QUEUE_MAXSIZE = 64
@@ -175,42 +173,14 @@ class RecordingSession:
         self._pts_delta = 0
         self._expected_next_pts: 'int | None' = None
         self._seg_ticks = int(state.seg_duration * 90000)
-        self._apsc = self._make_apsc(channel_id)
         self._feeder_stop = threading.Event()
         self._feeder_thread = threading.Thread(target=self._feed_loop, daemon=True,
                                                name=f'PlutoRecFeeder-{channel_id[:8]}')
         self._feeder_thread.start()
 
-    @staticmethod
-    def _make_apsc(channel_id) -> 'ApScWriter | None':
-        """Resolve this recording's destination file and set up an
-        ApScWriter for it, or None if no owning timer could be found (e.g.
-        an instant-record path recording_filename_for doesn't recognize) -
-        recording proceeds either way, just without a jump/trick-play index.
-
-        Failures here must never take the recording itself down with them -
-        same best-effort posture as _continuize below - so any lookup error
-        is swallowed and logged rather than propagated.
-        """
-        try:
-            filename = recording_filename_for(channel_id)
-        except Exception as exc:
-            logger.debug('%s: recording_filename_for failed: %r', channel_id, exc)
-            return None
-        if filename is None:
-            logger.debug('%s: no owning timer found, skipping AP/SC', channel_id)
-            return None
-        return ApScWriter(filename)
-
     def _output(self, muxed: bytes) -> None:
-        """Continuize *muxed*, mirror the result into this session's AP/SC
-        index (if any), then enqueue it for the client - in that order,
-        since ApSc's offsets must describe the bytes actually landing in
-        the recorded file, i.e. post-_continuize, not the pre-shift ones.
-        """
+        """Continuize *muxed*, then enqueue it for the client."""
         out = self._continuize(muxed)
-        if self._apsc is not None:
-            self._apsc.feed(out)
         self._enqueue(out)
 
     def _continuize(self, muxed: bytes) -> bytes:
@@ -316,8 +286,6 @@ class RecordingSession:
         self._stopped = True
         self._feeder_stop.set()
         self._feeder_thread.join(timeout=5)
-        if self._apsc is not None:
-            self._apsc.close()
 
 
 def handle_recording(handler, channel_id):

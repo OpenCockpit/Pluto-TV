@@ -50,6 +50,8 @@ class PlutoSetup(Setup):
     def _locationConfigChanged(self):
         if config.plugins.plutotv.country.isChanged():
             return True
+        if config.plugins.plutotv.live_tv_mode.isChanged():
+            return True
         return any(getattr(config.plugins.plutotv, "live_tv_country" + str(n)).isChanged() for n in range(1, NUMBER_OF_LIVETV_BOUQUETS + 1))
 
     def keySave(self):

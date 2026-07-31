@@ -142,8 +142,25 @@ class PlutoTVRequest:
         self._pool[0].bootCache = value
 
     def _nextStreamSlot(self):
-        """Round-robin through pool slots for stream URLs."""
-        slot = self._pool[self._stream_index % STREAM_POOL_SIZE]
+        """Round-robin through pool slots for stream URLs - never slot 0.
+
+        Slot 0 is reserved for metadata/API calls (see __init__'s own
+        comment) - used concurrently by things like CockpitTVDownload's
+        bouquet-building, which boot()s slot 0 once per configured
+        country in the background (e.g. at every sessionstart). A live
+        stream sharing that same slot's device identity with unrelated
+        metadata traffic is exactly the collision buildStreamURL's own
+        docstring says this whole pool exists to avoid ("preventing
+        Pluto from killing concurrent streams") - just via a different
+        path (the bouquet-builder, not another concurrent stream) that
+        this round-robin previously didn't exclude. Confirmed in
+        production: the very first zap after boot always landed on slot
+        0 (self._stream_index starts at 0), coinciding with
+        sessionstart's bouquet-builder also boot()-ing slot 0 for
+        multiple countries in quick succession, right as a GStreamer
+        "Invalid manifest" error hit that same live stream.
+        """
+        slot = self._pool[1 + (self._stream_index % (STREAM_POOL_SIZE - 1))]
         self._stream_index += 1
         return slot
 
@@ -572,10 +589,6 @@ def _resolve_pluto_sref(sref):
 
 _live_channel_id = None
 
-_nav_instance = None
-
-_recording_bases = {}
-
 
 def _is_recording(nav, channel_id):
     """True if a currently-running, non-justplay record timer targets *channel_id*.
@@ -622,15 +635,7 @@ def recordServiceExtension(_nav, sref, *_args, **_kwargs):
     continuous, container-harmonized re-mux endpoint
     (/rec/{channel_id}.ts) - see RecordingProxy.py for why a recorded file
     needs different framing than a live HLS pipeline.
-
-    Also captures _nav into the module-level _nav_instance: this runs
-    (inside nav.recordService()) after RecordTimerEntry.Filename is already
-    computed but before record_service.prepare() is called, so it's the
-    earliest point at which the destination filename ApSc needs is both
-    resolvable and stable - see recording_filename_for.
     """
-    global _nav_instance
-    _nav_instance = _nav
     sref, channel_id = _resolve_pluto_sref(sref)
     if channel_id is not None:
         rec_url = f'http://{LiveProxy.PROXY_HOST}:{LiveProxy.PROXY_PORT}/rec/{channel_id}.ts'
@@ -638,41 +643,3 @@ def recordServiceExtension(_nav, sref, *_args, **_kwargs):
         parts[10] = rec_url.replace(":", "%3a")
         sref = eServiceReference(":".join(parts))
     return sref
-
-
-def recording_filename_for(channel_id):
-    """Return the .ts path *channel_id*'s active, non-justplay timer is
-    currently writing to - the file RecordingProxy's ApScWriter should
-    mirror .ap/.sc entries against - or None if no such timer is found.
-
-    eServiceMP3Record has a patched EOS-recovery path
-    (restartRecordingFromEos in servicemp3record.cpp) that, entirely inside
-    GStreamer/C++ with no Python-visible signal, renames the output file
-    mid-recording by appending "_001.ts" and reopens a fresh pipeline
-    against the same /rec/{channel_id}.ts URL when the HTTP stream sees a
-    spurious EOS. That reopens triggers a brand new GET to RecordingProxy,
-    i.e. a fresh call here for the same still-running timer. Comparing
-    against _recording_bases lets this tell that apart from a genuinely new
-    recording and reproduce the same rename, so ApSc's sidecar files follow
-    the recording across the restart instead of going stale on the old
-    filename.
-    """
-    if _nav_instance is None:
-        return None
-    base = None
-    for timer in _nav_instance.RecordTimer.timer_list:
-        if timer.justplay or not timer.Filename:
-            continue
-        if _pluto_channel_id(timer.service_ref.ref) == channel_id:
-            base = timer.Filename + '.ts'
-            break
-    if base is None:
-        _recording_bases.pop(channel_id, None)
-        return None
-    prev_base, prev_filename = _recording_bases.get(channel_id, (None, None))
-    if prev_base == base:
-        filename = prev_filename.replace('.ts', '_001.ts', 1)
-    else:
-        filename = base
-    _recording_bases[channel_id] = (base, filename)
-    return filename

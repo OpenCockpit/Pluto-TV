@@ -33,7 +33,7 @@ class PRSPlayer(MoviePlayer):
         self.mpservice = service
         self.id = sid
         self._resume_points = resume_points
-        MoviePlayer.__init__(self, self.session, service, sid)
+        MoviePlayer.__init__(self, self.session, service)
         self.skinName = ["MoviePlayer"]
 
         self._event_tracker = ServiceEventTracker(

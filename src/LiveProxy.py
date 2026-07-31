@@ -32,6 +32,7 @@ _SEQ_REPROCESS_WINDOW = 10
 _PREFETCH_LEAD_SEGMENTS = 20
 _AUDIO_BUFFER_RETAIN_EPOCHS = 1
 _MAX_AUDIO_EPOCH_LAG = 2
+_DISC_LOOKAHEAD_SEGMENTS = 30
 _MAX_AUDIO_BUFFER_BYTES = 50_000_000
 _VIDEO_BUFFER_RETAIN_MARGIN_BYTES = 400000
 _AUDIO_FETCH_WORKERS = 4
@@ -39,7 +40,9 @@ _AUDIO_PREPOPULATE_CAP = 10
 _LATE_AUDIO_WAIT_FACTOR = 2.0
 _DISC_AUDIO_PEEK_WAIT = 1.5
 _HANDLE_SEGMENT_DEADLINE_FACTOR = 1.0
-_COLD_START_FIRST_SEGMENT_WAIT = 2.0
+_COLD_START_FIRST_SEGMENT_WAIT = 5.0
+_VOD_COLD_START_MIN_SEGMENTS = 5
+_VOD_COLD_START_WAIT = 10.0
 _FFMPEG_TIMEOUT = 30
 _SESSION = requests.Session()
 
@@ -626,6 +629,16 @@ class _ChannelState:
         with self._lock:
             return bool(self._ready_segs)
 
+    def ready_seg_count(self) -> int:
+        """Thread-safe count of currently-produced segments.
+
+        Used by _handle_playlist's VOD cold-start wait to hold out for
+        several ready segments (see _VOD_COLD_START_MIN_SEGMENTS), not just
+        the first one has_ready_segs() alone would confirm.
+        """
+        with self._lock:
+            return len(self._ready_segs)
+
     def mark_provisional(self, seq: int):
         """Record that _ready_segs[seq] is a silence-muxed placeholder with a
         _resolve_late_audio_window upgrade in flight, not the final AV mux.
@@ -698,12 +711,29 @@ class _ChannelState:
         return min([requested_pts] + pending) if pending else requested_pts
 
     def close(self):
-        """Signal all pre-fetch threads to stop and wait for them to exit."""
+        """Signal all pre-fetch threads to stop and wait for them to exit.
+
+        A thread only notices _audio_prefetch_stop/_video_prefetch_stop
+        between blocking calls - one stuck in a slow or hanging _fetch()
+        (network I/O has no hard upper bound beyond whatever timeout that
+        specific call passed, which is not guaranteed to be <=5s - see
+        _fetch's own docstring) won't see the stop signal until that call
+        returns. join(timeout=5) can therefore expire while the thread is
+        still genuinely running - previously silent, so a caller had no way
+        to know cleanup didn't actually finish. Logged here instead of
+        swallowed so a thread left running past this point (still holding
+        whatever connection/resource its in-flight fetch is using) is at
+        least visible for diagnosing exactly this class of resource leak.
+        """
         self._audio_prefetch_stop.set()
         self._video_prefetch_stop.set()
         for t in (self._audio_prefetch_thread, self._video_prefetch_thread):
             if t is not None and t.is_alive():
                 t.join(timeout=5)
+                if t.is_alive():
+                    logger.debug('%s: did not stop within 5s of close() - still running, '
+                                 'likely blocked in a slow/hanging fetch; left as a detached '
+                                 'daemon thread rather than blocking close() further', t.name)
 
     def start_audio_prefetch_if_needed(self, channel_id: str):
         """Idempotently start the audio pre-fetch thread, if not already running.
@@ -1159,6 +1189,147 @@ def _cut_and_mux_next_window(channel_id: str, state: '_ChannelState') -> bool:
     return True
 
 
+def _estimate_v_end_pts(all_pts: list) -> int:
+    """Estimate a VOD video segment's own end PTS from its own frame
+    spacing (the *most common* gap between consecutive distinct PTS
+    values, sorted - robust to B-frame transmission-order reordering).
+
+    Only a fallback for when no subsequent segment's real PTS is
+    available to give an exact boundary instead - the final segment of a
+    VOD asset, or one immediately preceding a real CDN discontinuity.
+    Confirmed by directly comparing consecutive real windows' own logged
+    PTS ranges in a production session that this estimate systematically
+    overshoots the next segment's true start by ~40-55ms on *every*
+    boundary - not occasional noise, every single one - which is exactly
+    why _video_prefetch_loop now defers muxing a segment until its actual
+    successor's own v_pts is known, using this only where no successor
+    will ever exist to ask instead.
+    """
+    distinct_sorted = sorted(set(all_pts))
+    if len(distinct_sorted) > 1:
+        deltas = [b - a for a, b in zip(distinct_sorted, distinct_sorted[1:])]
+        delta_counts: dict = {}
+        for _d in deltas:
+            delta_counts[_d] = delta_counts.get(_d, 0) + 1
+        frame_interval = max(delta_counts, key=delta_counts.get)
+    else:
+        frame_interval = 1
+    return max(all_pts) + frame_interval
+
+
+def _mux_whole_video_segment(channel_id: str, state: '_ChannelState', epoch: int,
+                             vdata: bytes, v_pts: int, v_end_pts: int, is_disc: bool,
+                             pending_disc_ahead: bool = False):
+    """VOD-only alternative to _cut_and_mux_next_window: mux one whole CDN
+    video segment as its own output window, instead of slicing a sub-range
+    out of a continuous buffer via _RenditionBuffer.cut().
+
+    _RenditionBuffer.cut() locates its byte range with bisect() over
+    pts_list, which requires pts_list to be sorted - true for audio (AAC
+    has no B-frames, so transmission order already equals display order)
+    but not guaranteed for H.264 video with B-frames: a P-frame is
+    transmitted before the B-frames that display earlier than it, so a
+    video segment's own pts_offsets (as scanned by _scan_ts_index, in
+    transmission order) can be locally out of order. Confirmed on real
+    Pluto content via a diagnostic in _RenditionBuffer.append(): up to
+    roughly half the PTS entries in a single segment out of order, on both
+    live and VOD channels equally. bisect() on unsorted input doesn't
+    raise - it silently returns a technically-computed but wrong index,
+    slicing the wrong byte range. Only VOD is switched to this whole-
+    segment path (see the call site in _video_prefetch_loop) rather than
+    fixing _RenditionBuffer.cut() itself, to keep live TV's already-working
+    code path completely untouched.
+
+    None of this needs fixing in the first place for the common case this
+    function actually handles: in steady state, _video_prefetch_loop calls
+    this once per newly-fetched CDN segment, and an HLS segment is already
+    self-contained (its own SPS/PPS + leading keyframe) - there is no
+    reason to slice it out of a bigger buffer by PTS at all. Muxing it
+    whole, exactly as fetched, sidesteps the bisect dependency entirely.
+
+    *v_pts* and *v_end_pts* must be this segment's true min/max PTS
+    (order-independent - see the B-frame reasoning above; the caller
+    computes both via min()/max() over every entry in this segment's own
+    pts_offsets), not an approximated span. An earlier version of this
+    function derived v_end_pts as v_pts + one nominal seg_duration instead
+    - which is exactly the kind of imprecision the windowed-buffer redesign
+    (see _cut_and_mux_next_window's own docstring on why it replaced the
+    old per-segment design's tolerance-based matching with exact PTS-range
+    coverage) moved away from for good reason: a real CDN segment's true
+    span is never exactly the nominal target duration, so that
+    approximation systematically over- or under-covers the audio query by
+    a small amount on *every* window. cut()'s exact-range matching still
+    "succeeds" either way (over-coverage doesn't fail the match, it just
+    slices more bytes), so nothing here ever shows up as a miss or a large
+    per-window itsoffset - but over hundreds of windows in a long VOD
+    title, a systematic few-millisecond-per-window bias compounds into a
+    multi-second, steadily growing A/V offset that survives seeking
+    (every window carries the same bias) and never self-corrects (nothing
+    re-anchors to true content position - each window's own start is
+    exact, via min(), but its end, and therefore how much of the *next*
+    window's rightful audio bleeds into this one, was not). Using this
+    segment's own true max() instead removes the systematic bias entirely.
+
+    Mirrors _cut_and_mux_next_window's own audio-matching, muxing,
+    publishing, provisional/late-audio-retry, and epoch-resync logic
+    exactly (see that function's comments for the reasoning behind each),
+    just operating on a whole fetched segment instead of a buffer slice.
+    """
+    aslice, a_pts, covered = _slice_audio_for_window(
+        state, epoch, v_pts, v_end_pts, is_disc_window=is_disc,
+        wait_secs=(_DISC_AUDIO_PEEK_WAIT if is_disc else None),
+        channel_id=channel_id)
+
+    reset_cc = is_disc
+    with state._lock:
+        if state._cc_resync_pending:
+            reset_cc = True
+            state._cc_resync_pending = False
+    muxed = _ffmpeg_mux(vdata, aslice, state, is_disc=is_disc, track_cc=True, reset_cc=reset_cc,
+                        v_pts=v_pts, a_pts=a_pts)
+
+    with state._lock:
+        chunk_seq = state._next_chunk_seq
+        state._next_chunk_seq += 1
+        state._ready_segs[chunk_seq] = muxed
+        state._window_meta[chunk_seq] = _WindowMeta(epoch, v_pts, v_end_pts, is_disc)
+        while len(state._ready_segs) > _MAX_SEG_CACHE:
+            k, _ = state._ready_segs.popitem(last=False)
+            state._window_meta.pop(k, None)
+
+    logger.debug('%s/%s: Event: whole-segment window epoch=%s pts=[%s,%s) is_disc=%s'
+                 ' audio_covered=%s | Action: mux (%s bytes)',
+                 channel_id, chunk_seq, epoch, v_pts, v_end_pts, is_disc, covered, len(muxed))
+
+    if not covered:
+        state.mark_provisional(chunk_seq)
+        state.add_pending_audio_floor(epoch, v_pts)
+        threading.Thread(
+            target=_resolve_late_audio_window,
+            args=(channel_id, state, chunk_seq, vdata, epoch, v_pts, v_end_pts, is_disc),
+            daemon=True,
+            name=f'PlutoLateAudio-{channel_id[:8]}-{chunk_seq}',
+        ).start()
+
+        audio_epoch_now = state.current_audio_epoch()
+        if audio_epoch_now > epoch and not pending_disc_ahead:
+            logger.debug('%s/%s: Event: audio_epoch already ahead of video_epoch'
+                         ' (video rendition never flagged this transition) | Action:'
+                         ' resync video_epoch %s -> %s',
+                         channel_id, chunk_seq, epoch, audio_epoch_now)
+            state.set_video_epoch(audio_epoch_now)
+            with state._lock:
+                state._cc_resync_pending = True
+        elif epoch - audio_epoch_now >= _MAX_AUDIO_EPOCH_LAG:
+            logger.debug('%s/%s: Event: audio_epoch persistently behind video_epoch'
+                         ' by >= %s (missed audio-side disc marker) | Action:'
+                         ' resync video_epoch %s -> %s',
+                         channel_id, chunk_seq, _MAX_AUDIO_EPOCH_LAG, epoch, audio_epoch_now)
+            state.set_video_epoch(audio_epoch_now)
+            with state._lock:
+                state._cc_resync_pending = True
+
+
 def _audio_prefetch_loop(channel_id: str, state: '_ChannelState'):
     """Background thread: continuously fetch new audio segments and append
     them, in seq order, to the per-channel continuous audio buffer(s).
@@ -1321,6 +1492,8 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
     that CDN URL rotations (signed-URL token refresh) are picked up without
     restarting the thread.
     """
+    is_vod = channel_id.startswith('vod')
+    vod_pending_video: 'dict | None' = None
     fetched_seqs: set = set()
     bumped_disc_seqs: set = set()
     video_epoch = state.current_video_epoch()
@@ -1404,8 +1577,20 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
                 break
 
             is_disc = all_discs[i]
+            pending_disc_ahead = is_vod and any(
+                all_discs[i + 1:i + 1 + _DISC_LOOKAHEAD_SEGMENTS])
             if is_disc and seq not in bumped_disc_seqs:
                 bumped_disc_seqs.add(seq)
+                if is_vod and vod_pending_video is not None:
+                    # pylint: disable=unsubscriptable-object
+                    _mux_whole_video_segment(
+                        channel_id, state, video_epoch,
+                        vod_pending_video['vdata'], vod_pending_video['v_pts'],
+                        _estimate_v_end_pts(vod_pending_video['all_pts']),
+                        vod_pending_video['is_disc'], vod_pending_video['pending_disc_ahead'])
+                    # pylint: enable=unsubscriptable-object
+                    vod_pending_video = None
+                    video_epoch = state.current_video_epoch()
                 video_epoch += 1
                 state.set_video_epoch(video_epoch)
                 logger.debug('%s/%s: Event: CDN discontinuity tag | Action:'
@@ -1438,9 +1623,12 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
                 logger.debug('%s/%s: Event: no PTS found in video segment'
                              ' | Action: mux standalone (approx PTS), skip buffer',
                              channel_id, seq)
-                approx_start = state._video_cursor_pts
-                if approx_start is None and state._video_buf.pts_list:
-                    approx_start = state._video_buf.pts_list[-1]
+                if is_vod:
+                    approx_start = vod_pending_video['v_pts'] if vod_pending_video else None
+                else:
+                    approx_start = state._video_cursor_pts
+                    if approx_start is None and state._video_buf.pts_list:
+                        approx_start = state._video_buf.pts_list[-1]
                 if approx_start is None:
                     approx_start = 0
                 approx_end = approx_start + int(state.seg_duration * 90000)
@@ -1457,6 +1645,31 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
                         state._window_meta.pop(k, None)
                 fetched_seqs.add(seq)
                 continue
+
+            if is_vod:
+                all_pts = [p for _, p in pts_offsets]
+                v_pts = min(all_pts)
+                # pylint: disable-next=unsubscriptable-object
+                if vod_pending_video is not None and v_pts == vod_pending_video['v_pts']:
+                    logger.debug('%s/%s: Event: duplicate video PTS (CDN frame-repeat'
+                                 ' at splice) v_pts=%s | Action: drop, no window muxed',
+                                 channel_id, seq, v_pts)
+                    fetched_seqs.add(seq)
+                    continue
+                if vod_pending_video is not None:
+                    _mux_whole_video_segment(
+                        channel_id, state, video_epoch,
+                        vod_pending_video['vdata'], vod_pending_video['v_pts'], v_pts,
+                        vod_pending_video['is_disc'], vod_pending_video['pending_disc_ahead'])
+                    video_epoch = state.current_video_epoch()
+                vod_pending_video = {
+                    'vdata': vdata, 'v_pts': v_pts, 'all_pts': all_pts,
+                    'is_disc': is_disc, 'pending_disc_ahead': pending_disc_ahead,
+                }
+                fetched_seqs.add(seq)
+                new_seqs += 1
+                continue
+
             v_pts = pts_offsets[0][1]
 
             vbuf = state._video_buf
@@ -1475,6 +1688,15 @@ def _video_prefetch_loop(channel_id: str, state: '_ChannelState',
             new_seqs += 1
 
             _cut_and_mux_next_window(channel_id, state)
+            video_epoch = state.current_video_epoch()
+
+        if is_vod and vod_pending_video is not None and '#EXT-X-ENDLIST' in vtext:
+            _mux_whole_video_segment(
+                channel_id, state, video_epoch,
+                vod_pending_video['vdata'], vod_pending_video['v_pts'],
+                _estimate_v_end_pts(vod_pending_video['all_pts']),
+                vod_pending_video['is_disc'], vod_pending_video['pending_disc_ahead'])
+            vod_pending_video = None
             video_epoch = state.current_video_epoch()
 
         if state._video_prefetch_stop.is_set():
@@ -1900,8 +2122,11 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
         state.start_video_prefetch_if_needed(channel_id, idx)
 
         if not state.has_ready_segs():
-            cold_deadline = time.monotonic() + _COLD_START_FIRST_SEGMENT_WAIT
-            while not state.has_ready_segs() and time.monotonic() < cold_deadline:
+            is_vod = channel_id.startswith('vod')
+            budget = _VOD_COLD_START_WAIT if is_vod else _COLD_START_FIRST_SEGMENT_WAIT
+            min_segs = _VOD_COLD_START_MIN_SEGMENTS if is_vod else 1
+            cold_deadline = time.monotonic() + budget
+            while state.ready_seg_count() < min_segs and time.monotonic() < cold_deadline:
                 time.sleep(0.05)
 
         out = []
@@ -1911,6 +2136,8 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
                     or stripped == '#EXT-X-DISCONTINUITY'
                     or stripped.startswith('#EXT-X-MEDIA-SEQUENCE:')
                     or stripped.startswith('#EXTINF:')
+                    or stripped.startswith('#EXT-X-PLAYLIST-TYPE:')
+                    or stripped == '#EXT-X-ENDLIST'
                     or (stripped and not stripped.startswith('#'))):
                 continue
             out.append(line)
@@ -1923,6 +2150,8 @@ class HLSProxyHandler(BaseHTTPRequestHandler):
         media_seq = advertise_seqs[0] if advertise_seqs else state._next_chunk_seq
         insert_at = 1 if out and out[0].strip() == '#EXTM3U' else 0
         out.insert(insert_at, f'#EXT-X-MEDIA-SEQUENCE:{media_seq}')
+        if channel_id.startswith('vod'):
+            out.insert(insert_at + 1, '#EXT-X-START:TIME-OFFSET=0,PRECISE=YES')
 
         for cseq in advertise_seqs:
             meta = window_meta.get(cseq)

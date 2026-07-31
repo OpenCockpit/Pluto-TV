@@ -2,14 +2,11 @@
 # Copyright (C) 2021 by Team OpenSPA
 # License: GNU General Public License v3.0
 
-from Components.Console import Console
 from Components.config import config
 from Plugins.Plugin import PluginDescriptor
-from Screens.MessageBox import MessageBox
-from Screens.Standby import QUIT_RESTART, TryQuitMainloop
 from skin import findSkinScreen
 
-from .PluginUtils import checkPluginUpdate
+from .PluginUpgrade import checkPluginUpdateAndOpen
 from . import _
 from .PlutoTVRequest import playServiceExtension, recordServiceExtension, startProactiveRefresh
 from .PlutoTVDownload import PlutoTVDownload, Silent
@@ -40,39 +37,9 @@ def Download_PlutoTV(session, **_kwargs):
 
 
 def system(session, **_kwargs):
-    if config.plugins.plutotv.auto_update_check.value != "yes":
-        session.open(PlutoTVCockpit)
-        return
-
-    update = checkPluginUpdate("enigma2-plugin-extensions-plutotvcockpit")
-    if update:
-        def _installUpdate(answer):
-            if answer:
-                def _showRestartPrompt(_data, _retval, _extra_args):
-                    session.openWithCallback(
-                        lambda restart: session.open(PlutoTVCockpit) if not restart else session.open(TryQuitMainloop, QUIT_RESTART),
-                        MessageBox,
-                        _("The package has been installed. Restart Enigma2 now to load the update?"),
-                        type=MessageBox.TYPE_YESNO,
-                        default=True
-                    )
-
-                install_cmd = f"opkg install {update['path'] or update['package']}"
-                Console().ePopen(install_cmd, _showRestartPrompt)
-                return
-
-            session.open(PlutoTVCockpit)
-
-        session.openWithCallback(
-            _installUpdate,
-            MessageBox,
-            _("A newer PlutoTVCockpit package (%s) is available. Do you want to install it now?") % update["version"],
-            type=MessageBox.TYPE_YESNO,
-            default=False
-        )
-        return
-
-    session.open(PlutoTVCockpit)
+    checkPluginUpdateAndOpen(
+        session, "enigma2-plugin-extensions-plutotvcockpit", "PlutoTVCockpit",
+        PlutoTVCockpit, config.plugins.plutotv.auto_update_check)
 
 
 def Plugins(**_kwargs):
