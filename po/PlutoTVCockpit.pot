@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-27 14:32+0200\n"
-"PO-Revision-Date: 2026-07-27 14:38+0200\n"
+"POT-Creation-Date: 2026-08-19 13:51+0200\n"
+"PO-Revision-Date: 2026-08-19 13:52+0200\n"
 "Last-Translator: xcentaurix\n"
 "Language-Team: xcentaurix\n"
 "Language: de\n"
@@ -20,6 +20,33 @@ msgstr ""
 "X-Generator: Poedit 3.5\n"
 "X-Poedit-Basepath: ../src\n"
 "X-Poedit-SearchPath-0: .\n"
+
+msgid "Local"
+msgstr ""
+
+msgid "service name"
+msgstr ""
+
+msgid "service reference"
+msgstr ""
+
+msgid "None"
+msgstr ""
+
+msgid "Stitcher"
+msgstr ""
+
+msgid "JMP2 proxy"
+msgstr ""
+
+msgid "i.mjh.nz"
+msgstr ""
+
+msgid "Yes"
+msgstr ""
+
+msgid "No"
+msgstr ""
 
 msgid "Remove picons"
 msgstr ""
@@ -74,6 +101,12 @@ msgid "Data location"
 msgstr ""
 
 msgid "Location the config data are stored in."
+msgstr ""
+
+msgid "Log level"
+msgstr ""
+
+msgid "Select the level for debug logging."
 msgstr ""
 
 msgid "Loading data... Please wait"
@@ -169,33 +202,6 @@ msgid "Create Live-TV Bouquet"
 msgstr ""
 
 msgid "Temporarily switch the VoD list to another country"
-msgstr ""
-
-msgid "Local"
-msgstr ""
-
-msgid "service name"
-msgstr ""
-
-msgid "service reference"
-msgstr ""
-
-msgid "None"
-msgstr ""
-
-msgid "Stitcher"
-msgstr ""
-
-msgid "JMP2 proxy"
-msgstr ""
-
-msgid "i.mjh.nz"
-msgstr ""
-
-msgid "Yes"
-msgstr ""
-
-msgid "No"
 msgstr ""
 
 msgid "A silent download is in progress."

@@ -24,7 +24,7 @@ from skin import parameters
 
 from . import _, __
 from .Debug import logger
-from .PlutoTVConfig import COUNTRY_NAMES, getselectedcountries
+from .ConfigInit import COUNTRY_NAMES, getselectedcountries
 from .PlutoTVRequest import plutoRequest
 from .PlutoTVDownload import PlutoTVDownload, Silent
 from .PRSUtils import PRSUtils

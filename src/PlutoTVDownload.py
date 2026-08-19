@@ -17,7 +17,7 @@ from twisted.internet import reactor
 
 from . import _
 from .Debug import logger
-from .PlutoTVConfig import COUNTRY_NAMES, TSIDS, getselectedcountries
+from .ConfigInit import COUNTRY_NAMES, TSIDS, getselectedcountries
 from .LiveProxy import PROXY_HOST, PROXY_PORT
 from .PlutoTVRequest import plutoRequest
 from .Variables import TIMER_FILE, NODATA_FILE, BOUQUET_FILE, BOUQUET_NAME, CHANNELLIST_FILE, XMLTV_FILE

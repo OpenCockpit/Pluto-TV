@@ -10,7 +10,7 @@ from enigma import eServiceReference
 import requests
 
 from .Debug import logger
-from .PlutoTVConfig import pickForwardIP, TSIDS
+from .ConfigInit import pickForwardIP, TSIDS
 from .Variables import STREAM_POOL_SIZE, USER_AGENT
 from . import LiveProxy
 

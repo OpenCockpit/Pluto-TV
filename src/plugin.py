@@ -7,6 +7,7 @@ from Plugins.Plugin import PluginDescriptor
 from skin import findSkinScreen
 
 from .PluginUpgrade import checkPluginUpdateAndOpen
+from . import ConfigInit  # noqa: F401, pylint: disable=unused-import
 from . import _
 from .PlutoTVRequest import playServiceExtension, recordServiceExtension, startProactiveRefresh
 from .PlutoTVDownload import PlutoTVDownload, Silent

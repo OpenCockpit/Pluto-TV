@@ -45,6 +45,7 @@ class PlutoSetup(Setup):
         configList.append((_("Picon type"), config.plugins.plutotv.picons, _("Using service name picons means they will continue to work even if the service reference changes. Also, they can be shared between channels of the same name that don't have the same service references.")))
         configList.append((_("Automatic update check"), config.plugins.plutotv.auto_update_check, _("Automatically check for a newer package update when the plugin GUI is opened.")))
         configList.append((_("Data location"), config.plugins.plutotv.config_folder, _("Location the config data are stored in.")))
+        configList.append((_("Log level"), config.plugins.plutotvcockpit.debug_log_level, _("Select the level for debug logging.")))
         self["config"].list = configList
 
     def _locationConfigChanged(self):

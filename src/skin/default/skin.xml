@@ -1,13 +1,13 @@
 <?xml version="1.0" ?>
 <skin>
-	<screen flags="wfNoBorder" name="PlutoTVCockpit" position="fill">
-		<ePixmap pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/backdrop.jpg" position="0,0" size="e,1020" zPosition="-1"/>
+	<screen flags="wfNoBorder" name="PlutoTVCockpit" position="fill" resolution="1920,1080">
+		<ePixmap pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/backdrop.jpg" position="0,0" scale="scale" size="e,1020" zPosition="-1"/>
 		<eLabel backgroundColor="#000000" cornerRadius="12" position="70,30" size="1780,90" zPosition="1"/>
 		<widget alphatest="blend" font="Regular;40" foregroundColor="#00ffff00" halign="center" position="400,48" render="Label" size="1150,55" source="playlist" transparent="1" zPosition="2"/>
 		<widget backgroundColor="#00000000" font="Regular;43" halign="right" position="e-400,48" render="Label" size="300,55" source="global.CurrentTime" transparent="1" zPosition="5">
 			<convert type="ClockToText">Format:%H:%M</convert>
 		</widget>
-		<ePixmap alphatest="blend" pixmap="extensions/transblack.png" position="70,170" size="615,740" transparent="1" zPosition="1"/>
+		<ePixmap alphatest="blend" pixmap="extensions/transblack.png" position="70,170" scale="scale" size="615,740" transparent="1" zPosition="1"/>
 		<widget enableWrapAround="1" name="feedlist" position="70,170" scrollbarMode="showOnDemand" size="615,740" transparent="1" zPosition="5"/>
 		<widget alphatest="blend" pixmap="extensions/transblack.png" position="70,950" render="Pixmap" size="615,50" source="updated" transparent="1" zPosition="1">
 			<convert type="ConditionalShowHide"/>
@@ -23,8 +23,8 @@
 		<widget font="Regular;27" name="info" position="1223,235" size="619,675" transparent="1" zPosition="5"/>
 		<eLabel backgroundColor="#00101113" cornerRadius="12" position="0,e-60" size="1920,60" zPosition="1"/>
 		<widget addon="ColorButtonsSequence" alignment="left" backgroundColor="#00000000" connection="key_red,key_green,key_yellow,key_blue" font="Regular;33" position="224,1030" size="1694,35" spacing="10" textColors="key_red:#00ff0808,key_green:#0004c81b,key_yellow:#00edf506,key_blue:#00077cf5" transparent="1" valign="center" zPosition="10"/>
-		<ePixmap alphatest="blend" backgroundColor="#00000000" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/key_menu.png" position="30,1031" size="52,38" transparent="1" zPosition="2"/>
-		<ePixmap alphatest="blend" backgroundColor="#00000000" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/key_help.png" position="82,1031" size="52,38" transparent="1" zPosition="2"/>
+		<ePixmap alphatest="blend" backgroundColor="#00000000" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/key_menu.png" position="30,1025" scale="scale" size="80,40" transparent="1" zPosition="2"/>
+		<ePixmap alphatest="blend" backgroundColor="#00000000" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PlutoTVCockpit/skin/images/key_help.png" position="115,1025" scale="scale" size="80,40" transparent="1" zPosition="2"/>
 	</screen>
 	<screen backgroundColor="#ff000000" flags="wfNoBorder" name="DownloadProgress" position="60,60" resolution="1920,1080" size="620,200">
 		<eLabel alphatest="blend" backgroundColor="#2d101214" cornerRadius="8" position="0,0" size="620,200" widgetBorderColor="#2d888888" widgetBorderWidth="2" zPosition="-1"/>
