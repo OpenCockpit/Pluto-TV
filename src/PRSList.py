@@ -66,6 +66,8 @@ class PRSList(MenuList):
                         png = cine_half_png
                     elif cine_end_png and last >= length - 900000:
                         png = cine_end_png
+        else:
+            png = getattr(self, "menu_png", None)
 
         res.append(MultiContentEntryText(pos=applySkinFactor(45, 7), size=applySkinFactor(533, 35), font=0, text=name))
         if png:
