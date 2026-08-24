@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (C) 2026 by xcentaurix
 # License: GNU General Public License v3.0
 #
