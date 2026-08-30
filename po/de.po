@@ -229,7 +229,7 @@ msgid "Updating: Pluto TV %s"
 msgstr "Update: PlutoTV %s"
 
 msgid "PlutoTVCockpit"
-msgstr "PlutoTV"
+msgstr "PlutoTVCockpit"
 
 msgid "View video on demand and download a bouquet of live tv channels"
 msgstr "VoD Playback und Live-TV-Bouquet Download"

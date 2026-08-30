@@ -19,14 +19,14 @@
 		<widget backgroundColor="#00000000" font="Regular;44" halign="right" position="e-400,48" render="Label" size="300,55" source="global.CurrentTime" transparent="1" zPosition="5">
 			<convert type="ClockToText">Format:%H:%M</convert>
 		</widget>
-		<ePixmap alphatest="blend" pixmap="extensions/transblack.png" position="70,170" scale="scale" size="615,740" transparent="1" zPosition="1"/>
+		<ePixmap alphatest="blend" pixmap="~/../images/transblack.png" position="70,170" scale="scale" size="615,740" transparent="1" zPosition="1"/>
 		<widget enableWrapAround="1" name="feedlist" position="70,170" scrollbarMode="showOnDemand" size="615,740" transparent="1" zPosition="5"/>
-		<widget alphatest="blend" pixmap="extensions/transblack.png" position="70,950" render="Pixmap" size="615,50" source="updated" transparent="1" zPosition="1">
+		<widget alphatest="blend" pixmap="~/../images/transblack.png" position="70,950" render="Pixmap" size="615,50" source="updated" transparent="1" zPosition="1">
 			<convert type="ConditionalShowHide"/>
 		</widget>
 		<widget alphatest="blend" font="Regular;26" halign="center" position="70,950" render="Label" size="615,50" source="updated" transparent="1" valign="center" zPosition="5"/>
 		<widget backgroundColor="black" font="Regular;50" halign="center" name="loading" position="center,center" size="800,60" transparent="0" valign="center" zPosition="10"/>
-		<widget alphatest="blend" pixmap="extensions/transblack.png" position="685,170" render="Pixmap" size="1165,750" source="vtitle" transparent="1" zPosition="0">
+		<widget alphatest="blend" pixmap="~/../images/transblack.png" position="685,170" render="Pixmap" size="1165,750" source="vtitle" transparent="1" zPosition="0">
 			<convert type="ConditionalShowHide"/>
 		</widget>
 		<widget font="Regular;38" foregroundColor="orange" position="778,180" render="Label" size="1065,48" source="vtitle" transparent="1" zPosition="5"/>
