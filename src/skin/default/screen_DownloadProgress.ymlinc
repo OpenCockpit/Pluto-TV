@@ -7,7 +7,7 @@ screen:
   size: "620,200"
   children:
     - xmlinc:
-        file: "screenpart_fonts.noymlinc"
+        file: "screenpart_fonts.ymlinc"
     - eLabel:
         alphatest: "blend"
         backgroundColor: "#2d101214"
@@ -35,7 +35,7 @@ screen:
         backgroundColor: "#1143495b"
         borderWidth: "0"
         name: "progress"
-        pixmap: "/usr/lib/enigma2/python/Plugins/Extensions/%PLUGIN%/skin/images/progress.png"
+        pixmap: "~/../images/progress.png"
         position: "15,100"
         size: "590,12"
         zPosition: "2"

@@ -6,9 +6,9 @@ screen:
   size: "1920,1080"
   children:
     - xmlinc:
-        file: "screenpart_fonts.noymlinc"
+        file: "screenpart_fonts.ymlinc"
     - ePixmap:
-        pixmap: "/usr/lib/enigma2/python/Plugins/Extensions/%PLUGIN%/skin/images/backdrop.jpg"
+        pixmap: "~/../images/backdrop.jpg"
         position: "0,0"
         scale: "scale"
         size: "e,1020"
