@@ -52,7 +52,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
         self.colors = parameters.get("PlutoTvColors", [])
 
         self["feedlist"] = PRSList([], icons=("menu", "series", "cine", "cine_half", "cine_end"), resume_points=resumePointsInstance)
-        self["playlist"] = StaticText()
         self["loading"] = Label(_("Loading data... Please wait"))
         self["vtitle"] = StaticText()
         self["key_red"] = Button(_("Exit"))
@@ -61,7 +60,7 @@ class PlutoTVCockpit(Screen, HelpableScreen):
         self.yellowLabel = _("TMDb Search") if self.mdb == "tmdb" else (_("IMDb Search") if self.mdb else "")
         self["key_green"] = Button()
         self["updated"] = StaticText()
-        self["key_menu"] = Button(_("MENU"))
+        self["key_menu"] = Button("Menu")
         self["key_blue"] = Button(_("Change country"))
         self["poster"] = Pixmap()
         self["posterBG"] = Label()
@@ -134,7 +133,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
         self["posterBG"].hide()
         self["info"].setText("")
         self["vtitle"].setText("")
-        self["playlist"].setText(self.titlemenu)
         self["loading"].show()
         self.title = _("PlutoTV") + " - " + self.titlemenu
 
@@ -302,7 +300,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
             self["feedlist"].moveToIndex(0)
             self["feedlist"].setList(menu)
             self.titlemenu = name
-            self["playlist"].text = self.titlemenu
             self.title = _("PlutoTV") + " - " + self.titlemenu
             self.history.append((index, menuact))
         elif __type == "series":
@@ -319,7 +316,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
                 menu.append(self["feedlist"].listentry(_("Episode") + " " + key[2] + ". " + sname, stype, _id, key[0]))
             self["feedlist"].setList(menu)
             self.titlemenu = menuact.split(" - ")[0] + " - " + name
-            self["playlist"].text = self.titlemenu
             self.title = _("PlutoTV") + " - " + self.titlemenu
             self.history.append((index, menuact))
             self["feedlist"].moveToIndex(0)
@@ -367,7 +363,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
             self.history.pop()
             self["feedlist"].moveToIndex(hist)
             self.titlemenu = histname
-            self["playlist"].text = self.titlemenu
             self.title = _("PlutoTV") + " - " + self.titlemenu
             if not self.history:
                 self["poster"].hide()
@@ -379,7 +374,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
             menu.append(self["feedlist"].listentry(_("Season") + " " + key, "seasons", key))
         self["feedlist"].setList(menu)
         self.titlemenu = self._series_name + " - " + _("Seasons")
-        self["playlist"].text = self.titlemenu
         self.title = _("PlutoTV") + " - " + self.titlemenu
         self.history.append((self._series_index, self._series_menuact))
         self["feedlist"].moveToIndex(0)

@@ -1,9 +1,6 @@
 screen:
-  backgroundColor: "#ff000000"
-  flags: "wfNoBorder"
   name: "DownloadProgress"
   position: "60,60"
-  resolution: "1920,1080"
   size: "620,200"
   children:
     - xmlinc:

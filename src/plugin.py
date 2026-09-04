@@ -65,4 +65,8 @@ def Plugins(**_kwargs):
             fnc=sessionstart,
             needsRestart=True
         ),
+        PluginDescriptor(
+            where=PluginDescriptor.WHERE_SKINCHANGE,
+            fnc=loadPluginSkin
+        ),
     ]
