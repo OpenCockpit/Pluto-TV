@@ -44,7 +44,7 @@ def system(session, **_kwargs):
 
 
 def Plugins(**_kwargs):
-    return [
+    descriptors = [
         PluginDescriptor(
             name=_("PlutoTVCockpit"),
             where=PluginDescriptor.WHERE_PLUGINMENU,
@@ -65,8 +65,15 @@ def Plugins(**_kwargs):
             fnc=sessionstart,
             needsRestart=True
         ),
-        PluginDescriptor(
-            where=PluginDescriptor.WHERE_SKINCHANGE,
-            fnc=loadPluginSkin
-        ),
     ]
+    try:
+        descriptors += [
+            PluginDescriptor(
+                where=PluginDescriptor.WHERE_SKINCHANGE,
+                fnc=loadPluginSkin
+            )
+        ]
+    except Exception:
+        pass
+
+    return descriptors

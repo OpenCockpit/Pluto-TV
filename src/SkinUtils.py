@@ -9,11 +9,11 @@ from .ScreenSummaryFix import patchScreenApplySkin
 
 
 def getSkinPath(file_name):
-    skin_path = Path(__file__).parent / "skin" / "default" / file_name
+    skin_path = Path(__file__).parent / "skin" / file_name
     return str(skin_path)
 
 
 def loadPluginSkin(file_name="skin.xml", session=None):
-    skin_file = getSkinPath(file_name)
+    skin_file = str(Path(__file__).parent / "skin" / "default" / file_name)
     loadSkin(skin_file, scope=SCOPE_SKIN)
     patchScreenApplySkin()

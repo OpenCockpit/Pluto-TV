@@ -134,15 +134,14 @@ def checkPluginUpdate(package_name):
 
 
 def checkPluginUpdateAndOpen(session, package_name, plugin_name, main_screen, auto_update_config, **screen_kwargs):
-    """Check *package_name* for a newer opkg version, prompt to install it
-    if one is found, then open *main_screen* either way once resolved -
-    whether an update was installed, declined, or none existed.
+    """Open *main_screen* immediately, then separately check *package_name*
+    for a newer opkg version and prompt to install it if one is found.
 
     *auto_update_config* is a ConfigYesNo-style value (e.g.
-    config.plugins.plutotv.auto_update_check) - the whole check is skipped
-    (opening main_screen immediately) unless its value is "yes".
-    **screen_kwargs are forwarded to every session.open(main_screen, ...)
-    call below, for a caller whose main screen needs constructor arguments.
+    config.plugins.plutotv.auto_update_check) - the check itself is skipped
+    entirely unless its value is "yes"; main_screen still opens either way.
+    **screen_kwargs are forwarded to the session.open(main_screen, ...)
+    call, for a caller whose main screen needs constructor arguments.
 
     Extracted from PlutoTVCockpit/SamsungTVCockpit/RakutenTVCockpit's
     near-identical plugin.py `system()` entry points, which differed only
@@ -150,19 +149,20 @@ def checkPluginUpdateAndOpen(session, package_name, plugin_name, main_screen, au
     prompt, and which Screen to open - see each plugin's own plugin.py
     for the call site.
 
-    checkPluginUpdate() itself runs in a background thread via
+    checkPluginUpdate() runs in a background thread via
     threads.deferToThread - it shells out to "opkg update" (refreshing
     every configured feed, not just this plugin's own) with no timeout,
     which can take a long time or hang outright on a slow/unreachable
-    network. system(), this function's caller, is the plugin's direct
-    menu entry point - called synchronously on Enigma2's own GUI thread -
-    so running that check inline here would freeze the whole UI for
-    however long it takes. Both branches of the deferred result (found an
-    update, or the check itself failed) still need to get back onto the
-    GUI thread to call session.open()/session.openWithCallback() -
-    Twisted's Deferred callbacks already run on the reactor thread, which
-    is the same thread as Enigma2's own main loop, so no extra dispatch
-    is needed for that part.
+    network. main_screen is opened up front, before that check even
+    starts, so the user isn't stuck staring at the menu waiting for an
+    opkg update to finish before the screen they asked for shows up - any
+    update-available prompt this finds just stacks on top of main_screen
+    once the check resolves, whenever that is. Both branches of the
+    deferred result (found an update, or the check itself failed) still
+    need to get back onto the GUI thread to call session.open()/
+    session.openWithCallback() - Twisted's Deferred callbacks already run
+    on the reactor thread, which is the same thread as Enigma2's own main
+    loop, so no extra dispatch is needed for that part.
 
     After a successful install, this asks (default yes) whether to
     restart Enigma2 now rather than calling plugins.reloadPlugins():
@@ -171,41 +171,36 @@ def checkPluginUpdateAndOpen(session, package_name, plugin_name, main_screen, au
     own import system caches already-imported modules in sys.modules, so
     calling it again on an already-running plugin's package (this one,
     right now) never re-executes a single line of the just-installed
-    code. A real restart is the only way to actually pick it up. Declining
-    still opens main_screen, same as before - just running whatever code
-    was already loaded, not the new version, until the next restart.
+    code. A real restart is the only way to actually pick it up.
     """
+    session.open(main_screen, **screen_kwargs)
+
     if auto_update_config.value != "yes":
-        session.open(main_screen, **screen_kwargs)
         return
 
     def _updateChecked(update):
         if not update:
-            session.open(main_screen, **screen_kwargs)
             return
 
         def _installUpdate(answer):
-            if answer:
-                def _installFinished(_data, _retval, _extra_args):
-                    def _restartConfirmed(restart_answer):
-                        if restart_answer:
-                            session.open(TryQuitMainloop, retvalue=QUIT_RESTART)
-                            return
-                        session.open(main_screen, **screen_kwargs)
-
-                    session.openWithCallback(
-                        _restartConfirmed,
-                        MessageBox,
-                        _("%s has been updated. Restart Enigma2 now to use the new version?") % plugin_name,
-                        type=MessageBox.TYPE_YESNO,
-                        default=True
-                    )
-
-                install_cmd = f"opkg install {update['path'] or update['package']}"
-                Console().ePopen(install_cmd, _installFinished)
+            if not answer:
                 return
 
-            session.open(main_screen, **screen_kwargs)
+            def _installFinished(_data, _retval, _extra_args):
+                def _restartConfirmed(restart_answer):
+                    if restart_answer:
+                        session.open(TryQuitMainloop, retvalue=QUIT_RESTART)
+
+                session.openWithCallback(
+                    _restartConfirmed,
+                    MessageBox,
+                    _("%s has been updated. Restart Enigma2 now to use the new version?") % plugin_name,
+                    type=MessageBox.TYPE_YESNO,
+                    default=True
+                )
+
+            install_cmd = f"opkg install {update['path'] or update['package']}"
+            Console().ePopen(install_cmd, _installFinished)
 
         session.openWithCallback(
             _installUpdate,
@@ -217,6 +212,5 @@ def checkPluginUpdateAndOpen(session, package_name, plugin_name, main_screen, au
 
     def _updateCheckFailed(failure):
         logger.debug("checkPluginUpdate(%s) failed: %s", package_name, failure)
-        session.open(main_screen, **screen_kwargs)
 
     threads.deferToThread(checkPluginUpdate, package_name).addCallbacks(_updateChecked, _updateCheckFailed)

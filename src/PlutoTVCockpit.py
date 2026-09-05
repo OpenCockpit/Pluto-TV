@@ -51,7 +51,7 @@ class PlutoTVCockpit(Screen, HelpableScreen):
 
         self.colors = parameters.get("PlutoTvColors", [])
 
-        self["feedlist"] = PRSList([], icons=("menu", "series", "cine", "cine_half", "cine_end"), resume_points=resumePointsInstance)
+        self["feedlist"] = PRSList([], icons=("menu.png", "series.png", "cine.png", "cine_half.png", "cine_end.png"), resume_points=resumePointsInstance)
         self["loading"] = Label(_("Loading data... Please wait"))
         self["vtitle"] = StaticText()
         self["key_red"] = Button(_("Exit"))

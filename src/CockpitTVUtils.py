@@ -10,6 +10,8 @@ from Tools.Directories import fileExists
 from twisted.internet.reactor import callFromThread
 import requests
 
+from .Debug import logger
+
 
 class MountedDataFolder:
     """Tracks a plugin's data folder on whichever removable/mounted partition the
@@ -115,7 +117,9 @@ def downloadPoster(poster_session, data_folder, url, name, callback):
     """Download and cache a poster image, verifying cached files' magic bytes
     still match their extension (a CDN's content-type header can be wrong).
     """
+    logger.debug("downloadPoster: name=%r url=%r data_folder=%r", name, url, data_folder)
     if not name or not data_folder:
+        logger.debug("downloadPoster: %s - giving up, no callback fired", "no name" if not name else "no data_folder")
         return
     base = os.path.join(data_folder, name)
     for ext in ('.png', '.jpg'):
@@ -126,11 +130,12 @@ def downloadPoster(poster_session, data_folder, url, name, callback):
                     header = f.read(2)
                 is_png = header == b'\x89P'
                 if (ext == '.png') == is_png:
+                    logger.debug("downloadPoster: using cached %s", filename)
                     callFromThread(callback, filename, name)
                     return
                 os.remove(filename)
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.debug("downloadPoster: cache check failed for %s: %r", filename, exc)
     try:
         response = poster_session.get(url, timeout=5)
         response.raise_for_status()
@@ -140,10 +145,12 @@ def downloadPoster(poster_session, data_folder, url, name, callback):
             filename = base + ext
             with open(filename, "wb") as f:
                 f.write(rc)
+            logger.debug("downloadPoster: downloaded %d bytes to %s", len(rc), filename)
             callFromThread(callback, filename, name)
             return
-    except requests.exceptions.RequestException:
-        pass
+        logger.debug("downloadPoster: response too short (%d bytes)", len(rc))
+    except requests.exceptions.RequestException as exc:
+        logger.debug("downloadPoster: request failed: %r", exc)
     callFromThread(callback, "", name)
 
 

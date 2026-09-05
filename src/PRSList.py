@@ -6,14 +6,16 @@
 Instantiate directly - no per-plugin subclass needed:
 
     self["feedlist"] = PRSList([])                                            # Rakuten/Samsung: menu icon only
-    self["feedlist"] = PRSList([], icons=("menu", "series", "cine",
-                                           "cine_half", "cine_end"),
+    self["feedlist"] = PRSList([], icons=("menu.png", "series.png", "cine.png",
+                                           "cine_half.png", "cine_end.png"),
                                 resume_points=resumePointsInstance)            # Pluto: full VoD icon set
 
-*icons* names the plugin's own bundled skin/images/<name>.png files (also
-the optional skin-override name, looked up as icons/<name>.png in the
-active skin first). The plugin's own install directory is derived from
-PLUGIN in its Version.py, so a plugin need not pass its own path in.
+*icons* names the plugin's own bundled skin/images/<file> files (also the
+optional skin-override name, looked up as icons/<PLUGIN>/<file> in the
+active skin first) - each entry a full filename, e.g. "cine_half.png", not
+just "cine_half", so a reference-scanning tool like gitupdatepypics.py can
+find it as a literal string. The plugin's own install directory is derived
+from PLUGIN in its Version.py, so a plugin need not pass its own path in.
 
 *resume_points* (a ResumePoints instance, see PlutoUtils/RakutenTVUtils/
 SamsungTVUtils), if given, enables picking between "cine"/"cine_half"/
@@ -32,14 +34,16 @@ from .Version import PLUGIN
 
 
 class PRSList(MenuList):
-    def __init__(self, entries, icons=("menu",), resume_points=None):
+    def __init__(self, entries, icons=("menu.png",), resume_points=None):
         icon_dir = f"/usr/lib/enigma2/python/Plugins/Extensions/{PLUGIN}/skin/images"
         self._resume_points = resume_points
+        self._pixmaps = {}
 
-        for icon_name in icons:
-            fallback = os.path.join(icon_dir, f"{icon_name}.png")
-            resolved = x if fileExists(x := resolveFilename(SCOPE_CURRENT_SKIN, f"icons/{PLUGIN}/{icon_name}.png")) else fallback
-            setattr(self, f"{icon_name}_png", LoadPixmap(resolved) if fileExists(resolved) else None)
+        for icon_file in icons:
+            icon_name = os.path.splitext(icon_file)[0]
+            fallback = os.path.join(icon_dir, icon_file)
+            resolved = x if fileExists(x := resolveFilename(SCOPE_CURRENT_SKIN, f"icons/{PLUGIN}/{icon_file}")) else fallback
+            self._pixmaps[icon_name] = LoadPixmap(resolved) if fileExists(resolved) else None
 
         MenuList.__init__(self, entries, content=eListboxPythonMultiContent)
         font = fonts.get(PLUGIN, applySkinFactor("Regular", 19, 35))
@@ -51,23 +55,23 @@ class PRSList(MenuList):
 
         png = None
         if data == "menu":
-            png = getattr(self, "menu_png", None)
+            png = self._pixmaps.get("menu")
         elif data in {"series", "seasons"}:
-            png = getattr(self, "series_png", None)
+            png = self._pixmaps.get("series")
         elif data in {"movie", "episode"}:
-            png = getattr(self, "cine_png", None)
+            png = self._pixmaps.get("cine")
             if self._resume_points is not None:
                 sid = epid if data == "episode" else _id
                 last, length = self._resume_points.getResumePoint(sid)
                 if last:
-                    cine_half_png = getattr(self, "cine_half_png", None)
-                    cine_end_png = getattr(self, "cine_end_png", None)
+                    cine_half_png = self._pixmaps.get("cine_half")
+                    cine_end_png = self._pixmaps.get("cine_end")
                     if cine_half_png and (last > 900000) and (not length or (last < length - 900000)):
                         png = cine_half_png
                     elif cine_end_png and last >= length - 900000:
                         png = cine_end_png
         else:
-            png = getattr(self, "menu_png", None)
+            png = self._pixmaps.get("menu")
 
         res.append(MultiContentEntryText(pos=applySkinFactor(45, 7), size=applySkinFactor(533, 35), font=0, text=name))
         if png:
