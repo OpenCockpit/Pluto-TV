@@ -253,7 +253,6 @@ class PlutoTVDownload(TVDownloadScreenMixin, PlutoTVDownloadBase, Screen):
         self["progress"] = ProgressBar()
         self["action"] = Label()
         self.updateAction()
-        self["wait"] = Label()
         self["status"] = Label(_("Please wait..."))
         self["actions"] = ActionMap(["OkCancelActions"], {"cancel": self.exit}, -1)
         self.onFirstExecBegin.append(self.init)

@@ -4,8 +4,6 @@ screen:
   size: "1920,1080"
   children:
     - xmlinc:
-        file: "screenpart_defaults.ymlinc"
-    - xmlinc:
         file: "screenpart_TitleBar.ymlinc"
     - ePixmap:
         pixmap: "~/../images/backdrop.jpg"

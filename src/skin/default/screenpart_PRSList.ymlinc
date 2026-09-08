@@ -1,0 +1,19 @@
+convert:
+  type: "COCTemplatedMultiContentEx"
+  cell:
+    vars:
+      - "ih = 35"
+    itemHeight: ih
+    fonts:
+      - "Regular;25"
+    fields:
+      - icon:
+          position: "5,0"
+          size: "20,ih"
+          flags: BT_SCALE|BT_KEEP_ASPECT_RATIO|BT_VALIGN_CENTER
+          value: 1
+      - text:
+          position: "45,0"
+          size: "533,ih"
+          flags: RT_VALIGN_CENTER
+          value: 2

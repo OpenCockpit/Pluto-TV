@@ -1,39 +1,41 @@
 # Copyright (C) 2026 by xcentaurix
 
-"""Shared VoD browse-list MenuList for the FAST-channel TV Cockpit plugins
+"""Shared VoD browse-list Source for the FAST-channel TV Cockpit plugins
 (Pluto TV, Rakuten TV, Samsung TV Plus, ...).
 
 Instantiate directly - no per-plugin subclass needed:
 
-    self["feedlist"] = PRSList([])                                            # Rakuten/Samsung: menu icon only
+    self["feedlist"] = PRSList([])                                             # Rakuten/Samsung: menu icon only
     self["feedlist"] = PRSList([], icons=("menu.png", "series.png", "cine.png",
-                                           "cine_half.png", "cine_end.png"),
-                                resume_points=resumePointsInstance)            # Pluto: full VoD icon set
+                                          "cine_half.png", "cine_end.png"),
+                                          resume_points=resumePointsInstance)  # Pluto: full VoD icon set
 
-*icons* names the plugin's own bundled skin/images/<file> files (also the
-optional skin-override name, looked up as icons/<PLUGIN>/<file> in the
-active skin first) - each entry a full filename, e.g. "cine_half.png", not
-just "cine_half", so a reference-scanning tool like gitupdatepypics.py can
-find it as a literal string. The plugin's own install directory is derived
-from PLUGIN in its Version.py, so a plugin need not pass its own path in.
+*icons* names the plugin's own bundled skin/images/<file> files
 
 *resume_points* (a ResumePoints instance, see PlutoUtils/RakutenTVUtils/
 SamsungTVUtils), if given, enables picking between "cine"/"cine_half"/
 "cine_end" for movie/episode entries based on playback progress.
+
+The actual per-row layout (icon + text position/size) is skin-defined, in
+Common/src/skin/screenpart_PRSList.ymlinc - included as the "feedlist"
+widget's own COCTemplatedMultiContentEx convert (see
+screenpart_PRSPluginBody.ymlinc). listentry() below only supplies the raw
+values that template's "value: N" field indices read: index 0 is the
+identity tuple (name, data, _id, epid) callers already read back via
+getCurrent()[0] - unchanged so PlutoTVCockpit.py/RakutenTVCockpit.py/
+SamsungTVCockpit.py's existing getSelection()-style code needed no changes -
+index 1 is the icon pixmap, index 2 the display text.
 """
 
 import os
 
-from Components.MenuList import MenuList
-from Components.MultiContent import MultiContentEntryText, MultiContentEntryPixmapAlphaBlend
+from Components.Sources.List import List
 from Tools.Directories import fileExists, resolveFilename, SCOPE_CURRENT_SKIN
 from Tools.LoadPixmap import LoadPixmap
-from enigma import BT_KEEP_ASPECT_RATIO, BT_SCALE, eListboxPythonMultiContent, gFont
-from skin import applySkinFactor, fonts
 from .Version import PLUGIN
 
 
-class PRSList(MenuList):
+class PRSList(List):
     def __init__(self, entries, icons=("menu.png",), resume_points=None):
         icon_dir = f"/usr/lib/enigma2/python/Plugins/Extensions/{PLUGIN}/skin/images"
         self._resume_points = resume_points
@@ -45,14 +47,16 @@ class PRSList(MenuList):
             resolved = x if fileExists(x := resolveFilename(SCOPE_CURRENT_SKIN, f"icons/{PLUGIN}/{icon_file}")) else fallback
             self._pixmaps[icon_name] = LoadPixmap(resolved) if fileExists(resolved) else None
 
-        MenuList.__init__(self, entries, content=eListboxPythonMultiContent)
-        font = fonts.get(PLUGIN, applySkinFactor("Regular", 19, 35))
-        self.l.setFont(0, gFont(font[0], font[1]))
-        self.l.setItemHeight(font[2])
+        List.__init__(self)
+        self.setList(entries)
+
+    def getSelectionIndex(self):
+        return self.index
+
+    def moveToIndex(self, index):
+        self.index = index
 
     def listentry(self, name, data, _id, epid=0):
-        res = [(name, data, _id, epid)]
-
         png = None
         if data == "menu":
             png = self._pixmaps.get("menu")
@@ -73,7 +77,4 @@ class PRSList(MenuList):
         else:
             png = self._pixmaps.get("menu")
 
-        res.append(MultiContentEntryText(pos=applySkinFactor(45, 7), size=applySkinFactor(533, 35), font=0, text=name))
-        if png:
-            res.append(MultiContentEntryPixmapAlphaBlend(pos=applySkinFactor(7, 9), size=applySkinFactor(20, 20), png=png, flags=BT_SCALE | BT_KEEP_ASPECT_RATIO))
-        return res
+        return ((name, data, _id, epid), png, name)

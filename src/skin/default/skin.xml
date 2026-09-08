@@ -1,48 +1,63 @@
 <?xml version="1.0" ?>
 <skin>
 	<colors>
-		<color name="panelBG" value="#1a1a1a"/>
-		<color name="barBG" value="#101010"/>
+		<color name="backgroundDark" value="#101010"/>
+		<color name="backgroundMedium" value="#1a1a1a"/>
+		<color name="backgroundLight" value="#303030"/>
 		<color name="separator" value="#404040"/>
-		<color name="keyRed" value="#e0331e"/>
-		<color name="keyGreen" value="#3c9f2a"/>
-		<color name="keyYellow" value="#e0c31e"/>
-		<color name="keyBlue" value="#1e4ab5"/>
-		<color name="progressBG" value="#282828"/>
-		<color name="secondBG" value="#202020"/>
-		<color name="sliderBG" value="#303030"/>
+		<color name="white" value="#ffffff"/>
+		<color name="black" value="#000000"/>
+		<color name="transparent" value="#ff000000"/>
+		<color name="gray" value="#aaaaaa"/>
+		<color name="green" value="#3c9f2a"/>
+		<color name="yellow" value="#e0c31e"/>
+		<color name="red" value="#e0331e"/>
+		<color name="cyan" value="#57ffff"/>
+		<color name="blue" value="#1e4ab5"/>
 	</colors>
 	<scrollbarstyle backgroundColor="black" borderColor="white" borderWidth="1" foregroundColor="white" mode="showOnDemand" width="10"/>
-	<screen backgroundColor="panelBG" flags="wfNoBorder" name="PlutoTVCockpit" position="fill" resolution="1920,1080" size="1920,1080">
-		<eLabel backgroundColor="barBG" position="0,0" size="e,55"/>
-		<widget font="Bold;38" position="10,0" render="Label" size="e-20,55" source="Title" transparent="1" valign="center" zPosition="1"/>
-		<eLabel backgroundColor="separator" position="0,54" size="e,2"/>
+	<screen backgroundColor="backgroundMedium" flags="wfNoBorder" name="PlutoTVCockpit" position="fill" resolution="1920,1080" size="1920,1080">
+		<eLabel backgroundColor="backgroundDark" position="0,0" size="1920,55"/>
+		<widget font="Bold;38" position="10,0" render="Label" size="1900,55" source="Title" transparent="1" valign="center" zPosition="1"/>
+		<eLabel backgroundColor="separator" position="0,54" size="1920,2"/>
 		<ePixmap pixmap="~/../images/backdrop.jpg" position="0,0" scale="scale" size="1920,1020" zPosition="-1"/>
-		<eLabel backgroundColor="panelBG" position="74,150" size="615,740" zPosition="1"/>
-		<widget enableWrapAround="1" name="feedlist" position="74,150" scrollbarMode="showOnDemand" size="615,740" transparent="1" zPosition="5"/>
-		<widget alphatest="blend" font="Regular;26" position="74,930" render="Label" size="1000,50" source="updated" transparent="1" valign="center" zPosition="5"/>
+		<eLabel backgroundColor="backgroundMedium" position="61,150" size="615,740" zPosition="1"/>
+		<widget enableWrapAround="1" position="61,150" render="Listbox" scrollbarMode="showOnDemand" size="615,740" source="feedlist" transparent="1" zPosition="5">
+			<convert type="COCTemplatedMultiContentEx">
+			{
+				"var": (
+					ih := 35,
+				),
+				"template": [
+					MultiContentEntryPixmapAlphaBlend(pos=(5,0), size=(20,ih), png=1, flags=BT_SCALE|BT_KEEP_ASPECT_RATIO|BT_VALIGN_CENTER),
+					MultiContentEntryText(pos=(45,0), size=(533,ih), flags=RT_VALIGN_CENTER, text=2),
+				],
+				"fonts": [gFont("Regular",25)],
+				"itemHeight": ih
+			}
+			</convert>
+		</widget>
+		<widget alphatest="blend" font="Regular;32" position="61,930" render="Label" size="1000,50" source="updated" transparent="1" valign="center" zPosition="5"/>
 		<widget backgroundColor="black" font="Regular;50" halign="center" name="loading" position="center,center" size="800,60" transparent="0" valign="center" zPosition="10"/>
-		<widget backgroundColor="black" font="Regular;38" foregroundColor="orange" position="739,150" render="Label" size="1107,48" source="vtitle" valign="top" zPosition="5">
+		<widget backgroundColor="black" font="Regular;38" foregroundColor="orange" position="726,150" render="Label" size="1132,48" source="vtitle" valign="top" zPosition="5">
 			<convert type="ConditionalShowHide"/>
 		</widget>
-		<widget alphatest="blend" backgroundColor="black" cornerRadius="27" font="Regular;0" foregroundColor="black" name="posterBG" position="737,213" size="472,679" widgetBorderColor="#00ffde2b" widgetBorderWidth="2" zPosition="3"/>
-		<widget alphatest="blend" backgroundColor="black" cornerRadius="25" name="poster" position="739,215" size="468,675" transparent="1" zPosition="5"/>
-		<widget font="Regular;26" name="info" position="1227,215" size="619,675" transparent="1" zPosition="5"/>
+		<widget alphatest="blend" backgroundColor="black" cornerRadius="27" font="Regular;0" foregroundColor="black" name="posterBG" position="724,213" size="472,679" widgetBorderColor="yellow" widgetBorderWidth="2" zPosition="3"/>
+		<widget alphatest="blend" backgroundColor="black" cornerRadius="25" name="poster" position="726,215" scaleFlags="scaleCenter" size="468,675" transparent="1" zPosition="5"/>
+		<widget backgroundColor="backgroundMedium" font="Regular;32" name="info" position="1241,215" size="615,675" transparent="0" zPosition="5"/>
 		<eLabel backgroundColor="separator" position="0,1024" size="1920,2"/>
-		<eLabel backgroundColor="barBG" position="0,1025" size="1920,55"/>
-		<widget conditional="key_red" font="Regular;32" foregroundColor="keyRed" halign="center" name="key_red" position="0,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
-		<widget conditional="key_green" font="Regular;32" foregroundColor="keyGreen" halign="center" name="key_green" position="435,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
-		<widget conditional="key_yellow" font="Regular;32" foregroundColor="keyYellow" halign="center" name="key_yellow" position="870,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
-		<widget conditional="key_blue" font="Regular;32" foregroundColor="keyBlue" halign="center" name="key_blue" position="1305,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
+		<eLabel backgroundColor="backgroundDark" position="0,1025" size="1920,55"/>
+		<widget conditional="key_red" font="Regular;32" foregroundColor="red" halign="center" name="key_red" position="0,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
+		<widget conditional="key_green" font="Regular;32" foregroundColor="green" halign="center" name="key_green" position="435,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
+		<widget conditional="key_yellow" font="Regular;32" foregroundColor="yellow" halign="center" name="key_yellow" position="870,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
+		<widget conditional="key_blue" font="Regular;32" foregroundColor="blue" halign="center" name="key_blue" position="1305,1032" size="435,38" transparent="1" valign="center" zPosition="2"/>
 		<widget conditional="key_menu" font="Regular;32" foregroundColor="white" halign="center" name="key_menu" position="1740,1032" size="90,38" transparent="1" valign="center" zPosition="2"/>
 		<widget conditional="key_info" font="Regular;32" foregroundColor="white" halign="center" name="key_info" position="1830,1032" size="90,38" transparent="1" valign="center" zPosition="2"/>
 	</screen>
-	<screen backgroundColor="panelBG" flags="wfNoBorder" name="DownloadProgress" position="60,60" resolution="1920,1080" size="620,200">
-		<eLabel alphatest="blend" backgroundColor="#2d101214" cornerRadius="8" position="0,0" size="620,200" widgetBorderColor="#2d888888" widgetBorderWidth="2" zPosition="-1"/>
-		<widget backgroundColor="#000000" borderColor="black" borderWidth="1" font="Regular;26" foregroundColor="#dfdfdf" halign="left" name="action" noWrap="1" position="15,10" size="590,30" transparent="1" valign="center"/>
-		<widget alphatest="blend" backgroundColor="#1143495b" borderWidth="0" name="progress" pixmap="~/../images/progress.png" position="15,100" size="590,12" zPosition="2"/>
-		<eLabel backgroundColor="#102a3b58" name="progess_background" position="15,100" size="590,12"/>
-		<widget backgroundColor="#000000" borderColor="black" borderWidth="1" font="Regular;20" foregroundColor="#dfdfdf" halign="center" name="wait" noWrap="1" position="15,65" size="590,30" transparent="1" valign="center"/>
-		<widget backgroundColor="#000000" borderColor="black" borderWidth="1" font="Regular;26" foregroundColor="#ffffff" halign="center" name="status" noWrap="1" position="15,120" size="590,30" transparent="1" valign="center"/>
+	<screen backgroundColor="transparent" flags="wfNoBorder" name="DownloadProgress" position="60,60" resolution="1920,1080" size="620,200">
+		<eLabel alphatest="blend" backgroundColor="backgroundLight" cornerRadius="8" position="0,0" size="620,200" widgetBorderColor="gray" widgetBorderWidth="2" zPosition="-1"/>
+		<widget backgroundColor="black" borderWidth="1" font="Regular;26" foregroundColor="white" halign="left" name="action" noWrap="1" position="15,10" size="590,30" transparent="1" valign="center"/>
+		<widget alphatest="blend" backgroundColor="backgroundDark" borderWidth="0" name="progress" pixmap="~/../images/progress.png" position="15,100" size="590,12" zPosition="2"/>
+		<widget backgroundColor="black" borderColor="black" borderWidth="1" font="Regular;26" foregroundColor="white" halign="center" name="status" noWrap="1" position="15,120" size="590,30" transparent="1" valign="center"/>
 	</screen>
 </skin>

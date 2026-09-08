@@ -2,12 +2,4 @@
     tag: "screen"
     flags: "wfNoBorder"
     resolution: "1920,1080"
-    backgroundColor: "panelBG"
-- default:
-    tag: "scrollbarstyle"
-    backgroundColor: "black"
-    borderColor: "white"
-    borderWidth: "1"
-    foregroundColor: "white"
-    mode: "showOnDemand"
-    width: "10"
+    backgroundColor: "backgroundMedium"

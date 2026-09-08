@@ -3,7 +3,7 @@
 
 import os
 import re
-from time import strftime, gmtime, localtime
+from time import strftime, localtime
 from urllib.parse import quote
 from twisted.internet import threads
 
@@ -20,8 +20,7 @@ from Screens.MessageBox import MessageBox
 from Screens.Screen import Screen
 from Tools.Directories import fileExists, isPluginInstalled
 from Tools.LoadPixmap import LoadPixmap
-from enigma import BT_KEEP_ASPECT_RATIO, BT_SCALE, BT_HALIGN_CENTER, BT_VALIGN_CENTER, eServiceReference, eTimer
-from skin import parameters
+from enigma import eServiceReference, eTimer
 
 from . import _, __
 from .Debug import logger
@@ -48,8 +47,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
         Screen.__init__(self, session)
         self.skinName = "PlutoTVCockpit"
         HelpableScreen.__init__(self)
-
-        self.colors = parameters.get("PlutoTvColors", [])
 
         self["feedlist"] = PRSList([], icons=("menu.png", "series.png", "cine.png", "cine_half.png", "cine_end.png"), resume_points=resumePointsInstance)
         self["loading"] = Label(_("Loading data... Please wait"))
@@ -115,6 +112,7 @@ class PlutoTVCockpit(Screen, HelpableScreen):
         self.updateDataTimer.callback.append(self.update_data_delayed)
         self.country = config.plugins.plutotv.country.value
         self.initialise()
+        self.onLayoutFinish.append(self["info"].hide)
         self.onLayoutFinish.append(self.getCategories)
 
     def initialise(self):
@@ -158,16 +156,17 @@ class PlutoTVCockpit(Screen, HelpableScreen):
             film = self.films[index]
             self.description = film[2].decode("utf-8")
             self["vtitle"].text = film[1].decode("utf-8")
-            info = film[4].decode("utf-8") + "       "
+            info = "FSK: " + film[4].decode("utf-8") + ", "
             self["MDBActions"].setEnabled(True)
             self["key_yellow"].text = self.yellowLabel
 
             if __type == "movie":
-                info += strftime("%Hh %Mm", gmtime(int(film[5])))
+                info += f"{int(film[5]) // 60} " + _("min") + "       "
             else:
                 info += __("%s Season available", "%s Seasons available", film[10]) % film[10]
                 self.numSeasons = film[10]
             self.vinfo = info
+            self.updateInfo()
             picname = film[0] + ".jpg"
             self.picname = picname
             pic = film[6]
@@ -186,15 +185,19 @@ class PlutoTVCockpit(Screen, HelpableScreen):
 
         elif __type == "episode":
             film = self.chapters[_id][index]
-            self.eptitle = film[1].decode("utf-8") + "  " + strftime("%Hh %Mm", gmtime(int(film[5])))
+            self.eptitle = film[1].decode("utf-8") + "  " + f"{int(film[5]) // 60} " + _("min")
             self.epinfo = film[3].decode("utf-8")
             self.updateInfo()
 
     def updateInfo(self):
-        vinfoColored = self.vinfo and self.addColor(self.vinfo)
-        eptitleColored = self.eptitle and self.addColor(self.eptitle)
-        spacer = "\n" if (vinfoColored or self.description) and (eptitleColored or self.epinfo) else ""
-        self["info"].setText("\n".join([x for x in (vinfoColored, self.description, spacer, eptitleColored, self.epinfo) if x]))
+        vinfo = self.vinfo + "\n" if self.vinfo and self.description else self.vinfo
+        spacer = "\n" if (self.vinfo or self.description) and (self.eptitle or self.epinfo) else ""
+        text = "\n".join([x for x in (vinfo, self.description, spacer, self.eptitle, self.epinfo) if x])
+        self["info"].setText(text)
+        if text:
+            self["info"].show()
+        else:
+            self["info"].hide()
 
     def downloadPosterCallback(self, filename, name):
         if name == self.picname:
@@ -204,7 +207,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
     def showPoster(self, filename, name):
         try:
             if name == self.picname and filename and os.path.isfile(filename):
-                self["poster"].instance.setPixmapScale(BT_SCALE | BT_KEEP_ASPECT_RATIO | BT_HALIGN_CENTER | BT_VALIGN_CENTER)
                 self["poster"].instance.setPixmap(LoadPixmap(filename))
                 self["poster"].show()
                 self["posterBG"].show()
@@ -475,11 +477,6 @@ class PlutoTVCockpit(Screen, HelpableScreen):
             selection=config.plugins.plutotv.country.choices.index(self.country),
             keys=[]
         )
-
-    def addColor(self, text, i=1):
-        if i < len(self.colors):
-            text = rf"\c{self.colors[i]:08x}" + text + rf"\c{self.colors[0]:08x}"  # noqa: W605
-        return text
 
     def close(self, *_args, **_kwargs):
         if self.updatebutton in Silent.afterUpdate:

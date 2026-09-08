@@ -4,7 +4,6 @@
 
 from Components.config import config
 from Plugins.Plugin import PluginDescriptor
-from skin import findSkinScreen
 
 from .PluginUpgrade import checkPluginUpdateAndOpen
 from . import ConfigInit  # noqa: F401, pylint: disable=unused-import
@@ -14,12 +13,11 @@ from .PlutoTVDownload import PlutoTVDownload, Silent
 from .PlutoTVCockpit import PlutoTVCockpit
 from .Variables import PLUGIN_ICON
 from .SkinUtils import loadPluginSkin
-from .Version import VERSION
+from .Version import PLUGIN, VERSION
 from .Debug import logger
 
 
-if findSkinScreen("PlutoTVCockpit") is None:
-    loadPluginSkin()
+loadPluginSkin(PLUGIN)
 
 
 def sessionstart(reason, session, **kwargs):  # pylint: disable=unused-argument
